@@ -1,0 +1,8 @@
+*.png
+.idea/*
+__pycache__/*
+cfg/*
+job_logs/*
+model/*
+models/*
+venv/*
