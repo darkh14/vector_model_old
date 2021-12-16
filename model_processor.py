@@ -22,77 +22,86 @@ class ModelProcessor:
 
     def __init__(self, parameters):
         self.db_connector = None
+
         self.inputs = []
-        self.inputs_pred = []
-        self.outputs = []
-        self._additional_data = {'periods': [],
-                                'organisations': [],
-                                'scenarios': [],
-                                'years': [],
-                                'x_indicators': [],
-                                'y_indicators': []}
-        self._data_is_set = False
-        self._additional_data_is_set = False
-        self._columns = {'x_columns': [],
-                         'y_columns': []}
-        self._columns_is_set = False
+
+
+        # self.inputs_pred = []
+        # self.outputs = []
+        # self._additional_data = {'periods': [],
+        #                        'organisations': [],
+        #                        'scenarios': [],
+        #                        'years': [],
+        #                        'x_indicators': [],
+        #                        'y_indicators': []}
+        # self._data_is_set = False
+        # self._additional_data_is_set = False
+        # self._columns = {'x_columns': [],
+        #                 'y_columns': []}
+        # self._columns_is_set = False
         self._parameters = parameters
-        self.X = np.array([[]])
-        self.X_scaled = np.array([[]])
-        self.y = np.array([])
-        self.X_pred = np.array([[]])
-        self.X_pd_pred = pd.DataFrame(np.array([[]]))
-        self.y_pd_pred = pd.DataFrame(np.array([[]]))
-        self.model = None
-        self._model_is_set = False
-        self.graph_file_name = 'graph.png'
+        # self.X = np.array([[]])
+        # self.X_scaled = np.array([[]])
+        # self.y = np.array([])
+        # self.X_pred = np.array([[]])
+        # self.X_pd_pred = pd.DataFrame(np.array([[]]))
+        # self.y_pd_pred = pd.DataFrame(np.array([[]]))
+        # self.model = None
+        # self._model_is_set = False
+        # self.graph_file_name = 'graph.png'
 
-    def fit(self, parameters):
+    def prepare_data(self, for_prediction=False, inputs=None):
 
-        epochs = parameters.get('epochs') or 10
-        validation_split = parameters.get('validation_split') or 0.2
+        if not for_prediction:
+            self.read_data()
+            self.write_additional_data()
+            inputs = self.inputs
+        else:
+            if not inputs:
+                raise ProcessorException('Parameter "inputs" is not found')
+            self.read_additional_data()
 
-        if not self.db_connector:
-            self.db_connector = db_connector.Connector(self._parameters, initialize=True)
+        input_data_col = self._prepare_dataset_merge(inputs, self._additional_data['x_indicators'])
+        output_data_col = None
+        if not for_prediction:
+            output_data_col = self._prepare_dataset_merge(self.outputs, self._additional_data['y_indicators'])
 
-        self.X, self.y = self.db_connector.read_x_y()
-        scaler = self._get_scaler()
-        self.X_scaled = scaler.fit_transform(self.X)
+        if not for_prediction:
+            input_data_col, output_data_col = self._fill_empty_lines(input_data_col, output_data_col)
+        else:
+            input_data_col = input_data_col.fillna(0)
 
-        self._set_model(renew=True)
-        self.model.compile(optimizer='adam', loss='MeanSquaredError', metrics=['RootMeanSquaredError'])
-        history = self.model.fit(self.X_scaled, self.y, epochs=epochs, verbose=2, validation_split=validation_split)
+        input_data_col = self._prepare_dataset_sort_one_hot(input_data_col)
+        y = None
+        if not for_prediction:
+            output_data_col = self._prepare_dataset_sort_one_hot(output_data_col)
+            self.db_connector.write_model_pd_data(input_data_col, output_data_col, rewrite=True)
+            output_data_col.drop(['PortionNumber', 'Organisation', 'Scenario', 'year'], axis=1, inplace=True)
+            col_changing = [col for col in self._additional_data['y_indicators'] if col.split(' ')[-1] == 'изменение']
+            col_changing_months = np.array([[col + '_' + str(month) for month in range(1, 13)] for col in col_changing])
+            col_changing_months = list(col_changing_months.flatten())
+            output_data_col = output_data_col[col_changing_months]
+            y = output_data_col.to_numpy()
+            self.write_columns(input_data_col, output_data_col, rewrite=True)
 
-        self._save_model()
+        # input_data_col.drop(['PortionNumber', 'Organisation', 'Scenario', 'year'], axis=1, inplace=True)
+        input_data_col.drop(['PortionNumber', 'Scenario'], axis=1, inplace=True)
 
-        return history.history
+        X = input_data_col.to_numpy()
 
-    def predict(self, inputs, indicators=None, get_graph=False, graph_data=None):
-        self.inputs_pred = inputs
-        self.prepare_data(for_prediction=True)
-        self.read_columns()
-        self._set_model()
-        y = self.model.predict(self.X_pred)
-        self.y_pd_pred = pd.DataFrame(y, columns=self._columns['y_columns'])
-
-        graph_bin = None
-        if get_graph:
-            x_graph = self._get_dataframe_for_graph(self.X_pd_pred, graph_data['x_indicator'])
-            y_graph = self._get_dataframe_for_graph(self.y_pd_pred, graph_data['y_indicator'])
-
-            self._make_graph(x_graph, y_graph, graph_data['x_indicator'], graph_data['y_indicator'])
-
-            graph_bin = self.read_graph_file()
-
-        return self.y_pd_pred.to_dict('records'), graph_bin
+        if not for_prediction:
+            self.db_connector.write_x_y(X, y, rewrite=True)
+        else:
+            self.X_pred = X
+            self.X_pd_pred = input_data_col
 
     def write_data(self, inputs, outputs):
 
-        self.set_data(inputs, outputs)
         if not self.db_connector:
             self.db_connector = db_connector.Connector(self._parameters, initialize=True)
 
-        self.db_connector.write_model_data(inputs, outputs, rewrite=True)
+        self.db_connector.write_inputs_outputs(inputs, outputs, rewrite=True)
+        self.set_data(inputs, outputs)
 
     def read_data(self, reset=False):
 
@@ -183,46 +192,6 @@ class ModelProcessor:
 
             self._columns = self.db_connector.read_additional_data(['x_columns', 'y_columns'])
             self._columns_is_set = True
-
-    def prepare_data(self, for_prediction=False):
-
-        if not for_prediction:
-            self.read_data()
-            self.write_additional_data()
-        else:
-            self.read_additional_data()
-
-        inputs = self.inputs_pred if for_prediction else self.inputs
-        input_data_col = self._prepare_dataset_merge(inputs, self._additional_data['x_indicators'])
-        if not for_prediction:
-            output_data_col = self._prepare_dataset_merge(self.outputs, self._additional_data['y_indicators'])
-
-        if not for_prediction:
-            input_data_col, output_data_col = self._fill_empty_lines(input_data_col, output_data_col)
-        else:
-            input_data_col = input_data_col.fillna(0)
-
-        input_data_col = self._prepare_dataset_sort_one_hot(input_data_col)
-        if not for_prediction:
-            output_data_col = self._prepare_dataset_sort_one_hot(output_data_col)
-            self.db_connector.write_model_pd_data(input_data_col, output_data_col, rewrite=True)
-            output_data_col.drop(['PortionNumber', 'Organisation', 'Scenario', 'year'], axis=1, inplace=True)
-            col_changing = [col for col in self._additional_data['y_indicators'] if col.split(' ')[-1] == 'изменение']
-            col_changing_months = np.array([[col + '_' + str(month) for month in range(1, 13)] for col in col_changing])
-            col_changing_months = list(col_changing_months.flatten())
-            output_data_col = output_data_col[col_changing_months]
-            y = output_data_col.to_numpy()
-            self.write_columns(input_data_col, output_data_col, rewrite=True)
-
-        input_data_col.drop(['PortionNumber', 'Organisation', 'Scenario', 'year'], axis=1, inplace=True)
-
-        X = input_data_col.to_numpy()
-
-        if not for_prediction:
-            self.db_connector.write_x_y(X, y, rewrite=True)
-        else:
-            self.X_pred = X
-            self.X_pd_pred = input_data_col
 
     def _prepare_dataset_merge(self, dataset, indicators):
 
@@ -412,6 +381,51 @@ class ModelProcessor:
 
         result = result/12
         return np.array(result)
+
+
+class Model:
+
+    def __init__(self, name, model_id='', organisation='', period=''):
+        self.name = name
+
+    def fit(self, parameters):
+
+        epochs = parameters.get('epochs') or 10
+        validation_split = parameters.get('validation_split') or 0.2
+
+        if not self.db_connector:
+            self.db_connector = db_connector.Connector(self._parameters, initialize=True)
+
+        self.X, self.y = self.db_connector.read_x_y()
+        scaler = self._get_scaler()
+        self.X_scaled = scaler.fit_transform(self.X)
+
+        self._set_model(renew=True)
+        self.model.compile(optimizer='adam', loss='MeanSquaredError', metrics=['RootMeanSquaredError'])
+        history = self.model.fit(self.X_scaled, self.y, epochs=epochs, verbose=2, validation_split=validation_split)
+
+        self._save_model()
+
+        return history.history
+
+    def predict(self, inputs, indicators=None, get_graph=False, graph_data=None):
+        self.inputs_pred = inputs
+        self.prepare_data(for_prediction=True)
+        self.read_columns()
+        self._set_model()
+        y = self.model.predict(self.X_pred)
+        self.y_pd_pred = pd.DataFrame(y, columns=self._columns['y_columns'])
+
+        graph_bin = None
+        if get_graph:
+            x_graph = self._get_dataframe_for_graph(self.X_pd_pred, graph_data['x_indicator'])
+            y_graph = self._get_dataframe_for_graph(self.y_pd_pred, graph_data['y_indicator'])
+
+            self._make_graph(x_graph, y_graph, graph_data['x_indicator'], graph_data['y_indicator'])
+
+            graph_bin = self.read_graph_file()
+
+        return self.y_pd_pred.to_dict('records'), graph_bin
 
 
 @JobProcessor.job_processing

@@ -33,7 +33,7 @@ class Connector:
         if initialize:
             self.initialize()
 
-    def write_model_data(self, inputs, outputs, model_name='', rewrite=False):
+    def write_inputs_outputs(self, inputs, outputs, model_name='', rewrite=False):
 
         self._write_data(inputs, 'inputs', rewrite)
         self._write_data(outputs, 'outputs', rewrite)
