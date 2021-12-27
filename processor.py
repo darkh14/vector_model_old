@@ -105,7 +105,6 @@ class Processor:
     def _requests_methods():
         result = dict()
         result['model_load_data'] = model_processor.load_data
-        result['model_prepare_data'] = model_processor.prepare_data
         result['model_fit'] = model_processor.fit
         result['model_predict'] = model_processor.predict
         result['job_get_state'] = job_processor.job_get_state

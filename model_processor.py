@@ -457,16 +457,15 @@ class DataProcessor:
         return indicator_id
 
 
-
 def load_data(parameters):
 
-    raw_data = parameters.get('raw_data')
+    raw_data = parameters.get('data')
 
     if not raw_data:
-        raise ProcessorException('raw data is not found in parameters')
+        raise ProcessorException('"data" is not found in parameters')
 
     processor = ModelProcessor(parameters)
-    processor.load_data(raw_data)
+    processor.load_data(raw_data, parameters.get('overwrite'))
 
     return {'status': 'OK', 'error_text': '', 'description': 'model data loaded'}
 

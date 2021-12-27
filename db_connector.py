@@ -45,7 +45,7 @@ class Connector:
             collection.drop()
             collection.insert_many(raw_data)
         else:
-            selections = ['period', 'organisation', 'report_type', 'indicator']
+            selections = ['version', 'period', 'scenario', 'organisation', 'report_type', 'indicator']
             for line in raw_data:
                 line_filter = {selection: line[selection] for selection in selections}
                 db_line = self._read_line('raw_data', line_filter)
@@ -55,13 +55,15 @@ class Connector:
 
     def read_indicator_from_id(self, indicator_id):
         result = self._read_line('indicators', {'indicator_id': indicator_id})
-        result.pop('_id')
+        if result:
+            result.pop('_id')
 
         return result
 
     def read_indicator_from_name_type(self, indicator, report_type):
         result = self._read_line('indicators', {'indicator': indicator, 'report_type': report_type})
-        result.pop('_id')
+        if result:
+            result.pop('_id')
 
         return result
 
