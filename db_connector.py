@@ -71,6 +71,16 @@ class Connector:
         line = {'indicator_id': indicator_id, 'indicator': indicator, 'report_type': report_type}
         self._write_line('indicators', line, selections=['indicator_id'])
 
+    def read_model_description(self, model_id):
+        return self._read_line('models', {'model_id': 'model_id'})
+
+    def write_model_description(self, model_description):
+        self._write_line('models', model_description, ['model_id'])
+
+    def read_data_with_indicators_filter(self, indicators):
+        collection = self.get_collection('raw_data')
+        return list(collection.find({'indicator_id': {'$in': indicators}}))
+
     def write_job(self, job_line):
         self._write_line('background_jobs', job_line, ['job_id'])
 
