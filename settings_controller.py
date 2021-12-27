@@ -1,6 +1,7 @@
 import json
 import uuid
 
+
 class Controller:
     def __init__(self, **kwargs):
         self.parameter_names = ['mongo_uri']
@@ -41,7 +42,7 @@ class Controller:
         db_id = self.dbs.get(db)
 
         if not db_id:
-            new_id = str(uuid.uuid4())
+            new_id = self.get_id()
             self.dbs[db] = 'vm_' + new_id
         try:
             with open('cfg/db.ini', 'w', encoding='utf-8') as f:
@@ -81,9 +82,6 @@ class Controller:
         if write_to_file:
             self.write_parameters_to_file()
 
+    def get_id(self):
+        return str(uuid.uuid4())
 
-if __name__ == '__main__':
-    pass
-    # settings = SettingsController()
-    # settings.set_parameter('parameter_1', 123)
-    # settings.get_parameter('parameter_1')

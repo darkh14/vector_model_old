@@ -142,8 +142,10 @@ def process(environ, start_response):
 
     return output
 
+
 def start_response():
     pass
+
 
 def process_with_parameters(parameters):
 
