@@ -16,24 +16,26 @@ from tensorflow import keras
 import matplotlib.pyplot as plt
 import base64
 
+DB_CONNECTOR = None
+
 
 class ModelProcessor:
 
     def __init__(self, parameters):
 
-        # self.inputs_pred = []
-        # self.outputs = []
+        set_db_connector(parameters)
+
+
         # self._additional_data = {'periods': [],
         #                        'organisations': [],
         #                        'scenarios': [],
         #                        'years': [],
         #                        'x_indicators': [],
         #                        'y_indicators': []}
-        # self._data_is_set = False
-        # self._additional_data_is_set = False
+
         # self._columns = {'x_columns': [],
         #                 'y_columns': []}
-        # self._columns_is_set = False
+
         self._parameters = parameters
         # self.X = np.array([[]])
         # self.X_scaled = np.array([[]])
@@ -45,8 +47,11 @@ class ModelProcessor:
         # self._model_is_set = False
         # self.graph_file_name = 'graph.png'
 
-    def load_data(self, raw_data):
+    def load_data(self, raw_data, overwrite=False):
 
+        data_processor = DataProcessor()
+
+        data_processor.load_data(raw_data, overwrite=overwrite)
 
 
 
@@ -96,13 +101,7 @@ class ModelProcessor:
     #         self.X_pred = X
     #         self.X_pd_pred = input_data_col
     #
-    # def write_data(self, inputs, outputs):
-    #
-    #     if not self.db_connector:
-    #         self.db_connector = db_connector.Connector(self._parameters, initialize=True)
-    #
-    #     self.db_connector.write_inputs_outputs(inputs, outputs, rewrite=True)
-    #     self.set_data(inputs, outputs)
+
     #
     # def read_data(self, reset=False):
     #
@@ -386,8 +385,8 @@ class ModelProcessor:
 
 class Model:
 
-    def __init__(self, name, model_id='', organisation='', period=''):
-        self.name = name
+    def __init__(self, model_id, name='', organisation='', period=''):
+        self.model_id = model_id
 
     def fit(self, parameters):
 
@@ -432,14 +431,11 @@ class Model:
 class DataProcessor:
 
     def __init__(self):
-        pass
 
+        self._db_connector = DB_CONNECTOR
 
-@JobProcessor.job_processing
-def fit(parameters):
-    processor = ModelProcessor(parameters)
-    history = processor.fit(parameters)
-    return {'status': 'OK', 'error_text': '', 'description': 'model fitted', 'history': history}
+    def load_data(self, raw_data, overwrite=False):
+        self._db_connector.write_raw_data(raw_data, overwrite=overwrite)
 
 
 def load_data(parameters):
@@ -453,6 +449,13 @@ def load_data(parameters):
     processor.load_data(raw_data)
 
     return {'status': 'OK', 'error_text': '', 'description': 'model data loaded'}
+
+
+@JobProcessor.job_processing
+def fit(parameters):
+    processor = ModelProcessor(parameters)
+    history = processor.fit(parameters)
+    return {'status': 'OK', 'error_text': '', 'description': 'model fitted', 'history': history}
 
 
 def predict(parameters):
@@ -470,3 +473,9 @@ def predict(parameters):
     if graph_bin:
         result['graph_data'] = base64.b64encode(graph_bin).decode(encoding='utf-8')
     return result
+
+
+def set_db_connector(parameters):
+    global DB_CONNECTOR
+    if not DB_CONNECTOR:
+        DB_CONNECTOR = db_connector.Connector(parameters, initialize=True)

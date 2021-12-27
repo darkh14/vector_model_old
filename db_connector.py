@@ -3,6 +3,8 @@ from logger import ProcessorException as ProcessorException
 import settings_controller
 import numpy as np
 
+from datetime import datetime
+
 
 class Connector:
 
@@ -33,10 +35,23 @@ class Connector:
         if initialize:
             self.initialize()
 
-    def write_inputs_outputs(self, inputs, outputs, model_name='', rewrite=False):
+    def write_raw_data(self, raw_data, model_name='', overwrite=False):
+        collection = self.get_collection('raw_data')
 
-        self._write_data(inputs, 'inputs', rewrite)
-        self._write_data(outputs, 'outputs', rewrite)
+        for line in raw_data:
+            line['loading_date'] = datetime.now()
+
+        if overwrite:
+            collection.drop()
+            collection.insert_many(raw_data)
+        else:
+            selections = ['period', 'organisation', 'report_type', 'indicator']
+            for line in raw_data:
+                line_filter = {selection: line[selection] for selection in selections}
+                db_line = self._read_line('raw_data', line_filter)
+
+                if not db_line or line['value'] == db_line['value']:
+                    collection.replace_one(line_filter, line, upsert=True)
 
     def write_model_pd_data(self, inputs, outputs, model_name='', rewrite=False):
         self._write_data(inputs.to_dict('records'), 'pd_inputs', rewrite)
@@ -159,11 +174,16 @@ class Connector:
         collection = self.get_collection(collection_name)
 
         if rewrite:
-            collection.delete_many({})
+            collection.drop()
             collection.insert_many(data)
         else:
             for line in data:
                 self._write_line(collection_name, line, selections)
+
+    def _read_line(self, collection_name, line_filter):
+
+        collection = self.get_collection(collection_name)
+        return collection.find_one(line_filter)
 
     def _read_data(self, collection_name):
 
