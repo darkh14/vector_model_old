@@ -1,4 +1,4 @@
-
+import settings_controller
 from logger import ProcessorException as ProcessorException
 import db_connector
 import numpy as np
@@ -50,7 +50,6 @@ class ModelProcessor:
     def load_data(self, raw_data, overwrite=False):
 
         data_processor = DataProcessor()
-
         data_processor.load_data(raw_data, overwrite=overwrite)
 
 
@@ -435,7 +434,28 @@ class DataProcessor:
         self._db_connector = DB_CONNECTOR
 
     def load_data(self, raw_data, overwrite=False):
+        raw_data = self.add_indicators_to_raw_data(raw_data)
         self._db_connector.write_raw_data(raw_data, overwrite=overwrite)
+
+    def add_indicators_to_raw_data(self, raw_data):
+        for line in raw_data:
+            indicator_id = self._get_indicator_id(line['indicator'], line['report_type'])
+            line['indicator_id'] = indicator_id
+
+        return raw_data
+
+    def _get_indicator_id(self, indicator, report_type):
+
+        indicator_from_db = self._db_connector.read_indicator_from_name_type(indicator, report_type)
+
+        if not indicator_from_db:
+            indicator_id = settings_controller.get_id()
+            self._db_connector.write_indicator(indicator_id, indicator, report_type)
+        else:
+            indicator_id = indicator_from_db['indicator_id']
+
+        return indicator_id
+
 
 
 def load_data(parameters):
