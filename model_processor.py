@@ -46,6 +46,11 @@ class ModelProcessor:
         # self.graph_file_name = 'graph.png'
 
     def load_data(self, raw_data):
+
+
+
+
+
     # def prepare_data(self, for_prediction=False, inputs=None):
     #
     #     if not for_prediction:

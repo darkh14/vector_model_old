@@ -42,7 +42,7 @@ class Controller:
         db_id = self.dbs.get(db)
 
         if not db_id:
-            new_id = self.get_id()
+            new_id = get_id()
             self.dbs[db] = 'vm_' + new_id
         try:
             with open('cfg/db.ini', 'w', encoding='utf-8') as f:
@@ -82,6 +82,7 @@ class Controller:
         if write_to_file:
             self.write_parameters_to_file()
 
-    def get_id(self):
-        return str(uuid.uuid4())
+
+def get_id():
+    return str(uuid.uuid4())
 
