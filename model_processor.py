@@ -61,17 +61,7 @@ class ModelProcessor:
                            model_description['y_indicators'])
 
         self.model.fit(parameters.get('epochs'), parameters.get('validation_split'))
-    #
 
-
-    #
-    # @staticmethod
-    # def _one_hot_encode(dataset, field_name, indicators):
-    #     for indicator in indicators:
-    #         dataset[field_name.lower() + ' '
-    #                 + str(indicator)] = dataset[field_name].apply(lambda x: 1 if x == indicator else 0)
-    #     # dataset.drop([field_name], axis=1, inplace=True)
-    #     return dataset
     #
     # @staticmethod
     # def _get_scaler(model_name='', renew=False, do_not_create=False):
@@ -309,33 +299,20 @@ class DataProcessor:
 
     def get_X_y_for_fitting(self, inputs, outputs, additional_data):
 
-         input_data_col = self._prepare_dataset_merge(inputs, additional_data['x_indicators'])
-         output_data_col = self._prepare_dataset_merge(outputs, additional_data['y_indicators'])
-         input_data_col, output_data_col = self._fill_empty_lines(input_data_col, output_data_col)
-    #
-    #     input_data_col = self._prepare_dataset_sort_one_hot(input_data_col)
-    #     y = None
-    #     if not for_prediction:
-    #         output_data_col = self._prepare_dataset_sort_one_hot(output_data_col)
-    #         self.db_connector.write_model_pd_data(input_data_col, output_data_col, rewrite=True)
-    #         output_data_col.drop(['PortionNumber', 'Organisation', 'Scenario', 'year'], axis=1, inplace=True)
-    #         col_changing = [col for col in self._additional_data['y_indicators'] if col.split(' ')[-1] == 'изменение']
-    #         col_changing_months = np.array([[col + '_' + str(month) for month in range(1, 13)] for col in col_changing])
-    #         col_changing_months = list(col_changing_months.flatten())
-    #         output_data_col = output_data_col[col_changing_months]
-    #         y = output_data_col.to_numpy()
-    #         self.write_columns(input_data_col, output_data_col, rewrite=True)
-    #
-    #     # input_data_col.drop(['PortionNumber', 'Organisation', 'Scenario', 'year'], axis=1, inplace=True)
-    #     input_data_col.drop(['PortionNumber', 'Scenario'], axis=1, inplace=True)
-    #
-    #     X = input_data_col.to_numpy()
-    #
-    #     if not for_prediction:
-    #         self.db_connector.write_x_y(X, y, rewrite=True)
-    #     else:
-    #         self.X_pred = X
-    #         self.X_pd_pred = input_data_col
+        input_data_col = self._prepare_dataset_merge(inputs, additional_data['x_indicators'])
+        output_data_col = self._prepare_dataset_merge(outputs, additional_data['y_indicators'])
+        input_data_col, output_data_col = self._fill_empty_lines(input_data_col, output_data_col)
+
+        input_data_col = self._prepare_dataset_sort_one_hot(input_data_col)
+        output_data_col = self._prepare_dataset_sort_one_hot(output_data_col)
+
+        input_data_col.drop(['Organisation', 'Scenario', 'year'], axis=1, inplace=True)
+        output_data_col.drop(['Organisation', 'Scenario', 'year'], axis=1, inplace=True)
+
+        X = input_data_col.to_numpy()
+        y = output_data_col.to_numpy()
+
+        return X, y
 
     def _prepare_dataset_merge(self, dataset, indicators):
 
@@ -404,25 +381,26 @@ class DataProcessor:
     def _get_month(date_str):
         return int(date_str.split('.')[1])
 
-    def _fill_empty_lines(self, input_dataset, output_dataset):
-        for organisation in self._additional_data['organisations']:
-            for scenario in self._additional_data['scenarios']:
-                for year in self._additional_data['years']:
-                    x_lines = input_dataset.loc[(input_dataset['Organisation'] == organisation)
-                                                 & (input_dataset['Scenario'] == scenario)
+    @staticmethod
+    def _fill_empty_lines(input_dataset, output_dataset, additional_data):
+        for organisation in additional_data['organisations']:
+            for scenario in additional_data['scenarios']:
+                for year in additional_data['years']:
+                    x_lines = input_dataset.loc[(input_dataset['organisation'] == organisation)
+                                                 & (input_dataset['scenario'] == scenario)
                                                  & (input_dataset['year'] == year)]
 
-                    y_lines = output_dataset.loc[(output_dataset['Organisation'] == organisation)
-                                                  & (output_dataset['Scenario'] == scenario)
+                    y_lines = output_dataset.loc[(output_dataset['organisation'] == organisation)
+                                                  & (output_dataset['scenario'] == scenario)
                                                   & (output_dataset['year'] == year)]
 
                     if x_lines.shape[0] == 1 and y_lines.shape[0] == 0:
-                        row = {'Organisation': organisation, 'Scenario': scenario, 'year': year}
+                        row = {'organisation': organisation, 'scenario': scenario, 'year': year}
                         output_dataset = output_dataset.append(row, ignore_index=True)
                         # print('{} - {} - {}'.format(organisation, scenario, year))
 
                     if x_lines.shape[0] == 0 and y_lines.shape[0] == 1:
-                        row = {'Organisation': organisation, 'Scenario': scenario, 'year': year}
+                        row = {'organisation': organisation, 'scenario': scenario, 'year': year}
                         input_dataset = input_dataset.append(row, ignore_index=True)
                         # print('{} - {} - {}'.format(organisation, scenario, year))
 
@@ -430,6 +408,14 @@ class DataProcessor:
         output_dataset = output_dataset.fillna(0)
 
         return input_dataset, output_dataset
+
+    @staticmethod
+    def _one_hot_encode(dataset, field_name, indicators):
+        for indicator in indicators:
+            dataset[field_name.lower() + ' '
+                    + str(indicator)] = dataset[field_name].apply(lambda x: 1 if x == indicator else 0)
+        # dataset.drop([field_name], axis=1, inplace=True)
+        return dataset
 
     def _get_indicator_id(self, indicator, report_type):
 
