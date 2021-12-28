@@ -5,7 +5,7 @@ import numpy as np
 
 import pandas as pd
 import os
-import joblib
+
 from job_processor import JobProcessor
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
@@ -15,6 +15,8 @@ from tensorflow import keras
 
 import matplotlib.pyplot as plt
 import base64
+
+import pickle
 
 DB_CONNECTOR = None
 
@@ -67,33 +69,15 @@ class ModelProcessor:
     #
     # def _set_model(self, model_name='', renew=False, do_not_create=False):
     #
-    #     folder_name = "model"
-    #     if renew or not self._model_is_set:
-    #         create = False
-    #
-    #         if not renew:
-    #             if os.path.isdir(folder_name):
-    #                 self.model = self.model = keras.models.load_model(folder_name)
-    #             elif not do_not_create:
-    #                 create = True
-    #         else:
-    #             create = True
-    #
-    #         if create:
-    #             self.model = self._create_model(self.X.shape[1], self.y.shape[1])
+
     #
     # def _save_model(self):
     #
-    #     folder_name = "model"
-    #     self.model.save(folder_name)
+
     #
     # @staticmethod
     # def _create_model(inputs_number, outputs_number):
-    #     model = Sequential()
-    #     model.add(Dense(600, activation="relu", input_shape=(inputs_number,), name='dense_1'))
-    #     model.add(Dense(400, activation="relu", name='dense_2'))
-    #     model.add(Dense(outputs_number, activation="linear", name='dense_4'))
-    #     return model
+
     #
     # @staticmethod
     # def _make_x_y_list(x_list, y_list):
@@ -200,15 +184,16 @@ class Model:
         self.x_columns = x_columns
         self.y_columns = y_columns
 
-        # scaler = self._get_scaler()
-        # self.X_scaled = scaler.fit_transform(self.X)
-        #
+        scaler = self._get_scaler(retrofit=retrofit)
+        X = scaler.fit_transform(X)
+
         # self._set_model(renew=True)
         # self.model.compile(optimizer='adam', loss='MeanSquaredError', metrics=['RootMeanSquaredError'])
         # history = self.model.fit(self.X_scaled, self.y, epochs=epochs, verbose=2, validation_split=validation_split)
         #
         # self._save_model()
         #
+        self._data_processor.write_scaler(self.model_id, scaler)
         # return history.history
         return []
 
@@ -231,19 +216,49 @@ class Model:
 
         return self.y_pd_pred.to_dict('records'), graph_bin
 
-    def _get_scaler(retrofit=False):
+    def _get_scaler(self, retrofit=False):
 
-        scaler = None
-
-        if not renew:
-            if os.path.isfile(scaler_filename):
-                scaler = joblib.load(scaler_filename)
-            elif not do_not_create:
+        if retrofit:
+            scaler = self._data_processor.read_scaler(self.model_id)
+            if not scaler:
                 scaler = MinMaxScaler()
         else:
             scaler = MinMaxScaler()
 
         return scaler
+
+    def _get_indicator_id(self, indicator, report_type):
+
+        indicator_from_db = self._db_connector.read_indicator_from_name_type(indicator, report_type)
+
+        if not indicator_from_db:
+            indicator_id = 'ind_' + settings_controller.get_id()
+            self._db_connector.write_indicator(indicator_id, indicator, report_type)
+        else:
+            indicator_id = indicator_from_db['indicator_id']
+
+        return indicator_id
+
+    def get_inner_model(self, retrofit=False):
+        pass
+        #     folder_name = "model"
+        #     if renew or not self._model_is_set:
+        #         create = False
+        #
+        #         if not renew:
+        #             if os.path.isdir(folder_name):
+        #                 self.model = self.model = keras.models.load_model(folder_name)
+        #             elif not do_not_create:
+        #                 create = True
+        #         else:
+        #             create = True
+        #
+        #         if create:
+        #             self.model = self._create_model(self.X.shape[1], self.y.shape[1])
+
+        #     folder_name = "model"
+        #     self.model.save(folder_name)
+
 
 class DataProcessor:
 
@@ -318,6 +333,24 @@ class DataProcessor:
 
     def write_columns(self, model_id, x_columns, y_columns):
         self._db_connector.write_model_columns(model_id, x_columns, y_columns)
+
+    def write_scaler(self, model_id, scaler):
+        scaler_packed = pickle.dumps(scaler, protocol=pickle.HIGHEST_PROTOCOL)
+        self._db_connector.write_model_scaler(model_id, scaler_packed)
+
+    def read_scaler(self, model_id):
+        model_description = self.read_model_description_from_db(model_id)
+        scaler_packed = model_description['scaler']
+        return pickle.loads(scaler_packed)
+
+    def write_inner_model(self, model_id, inner_model):
+        scaler_packed = pickle.dumps(inner_model, protocol=pickle.HIGHEST_PROTOCOL)
+        self._db_connector.write_model_scaler(model_id, scaler_packed)
+
+    def read_inner_model(self, model_id):
+        model_description = self.read_model_description_from_db(self.model_id)
+        scaler_packed = model_description['scaler']
+        return pickle.loads(scaler_packed)
 
     def _prepare_dataset_merge(self, dataset, indicators):
 
@@ -429,18 +462,6 @@ class DataProcessor:
                     + str(indicator)] = dataset[field_name].apply(lambda x: 1 if x == indicator else 0)
         # dataset.drop([field_name], axis=1, inplace=True)
         return dataset
-
-    def _get_indicator_id(self, indicator, report_type):
-
-        indicator_from_db = self._db_connector.read_indicator_from_name_type(indicator, report_type)
-
-        if not indicator_from_db:
-            indicator_id = 'ind_' + settings_controller.get_id()
-            self._db_connector.write_indicator(indicator_id, indicator, report_type)
-        else:
-            indicator_id = indicator_from_db['indicator_id']
-
-        return indicator_id
 
 
 def load_data(parameters):

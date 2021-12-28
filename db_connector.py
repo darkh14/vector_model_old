@@ -72,7 +72,7 @@ class Connector:
         self._write_line('indicators', line, selections=['indicator_id'])
 
     def read_model_description(self, model_id):
-        return self._read_line('models', {'model_id': 'model_id'})
+        return self._read_line('models', {'model_id': model_id})
 
     def write_model_description(self, model_description):
         self._write_line('models', model_description, ['model_id'])
@@ -81,6 +81,12 @@ class Connector:
         model_description = self.read_model_description(model_id)
         model_description['x_columns'] = x_columns
         model_description['y_columns'] = y_columns
+
+        self.write_model_description(model_description)
+
+    def write_model_scaler(self, model_id, scaler):
+        model_description = self.read_model_description(model_id)
+        model_description['scaler'] = scaler
 
         self.write_model_description(model_description)
 
