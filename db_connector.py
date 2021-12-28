@@ -90,6 +90,12 @@ class Connector:
 
         self.write_model_description(model_description)
 
+    def write_inner_model(self, model_id, inner_model):
+        model_description = self.read_model_description(model_id)
+        model_description['inner_model'] = inner_model
+
+        self.write_model_description(model_description)
+
     def read_data_with_indicators_filter(self, indicators):
         collection = self.get_collection('raw_data')
         return list(collection.find({'indicator_id': {'$in': indicators}}))

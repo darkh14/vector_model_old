@@ -17,6 +17,8 @@ import matplotlib.pyplot as plt
 import base64
 
 import pickle
+import zipfile
+import shutil
 
 DB_CONNECTOR = None
 
@@ -187,15 +189,17 @@ class Model:
         scaler = self._get_scaler(retrofit=retrofit)
         X = scaler.fit_transform(X)
 
-        # self._set_model(renew=True)
-        # self.model.compile(optimizer='adam', loss='MeanSquaredError', metrics=['RootMeanSquaredError'])
-        # history = self.model.fit(self.X_scaled, self.y, epochs=epochs, verbose=2, validation_split=validation_split)
-        #
-        # self._save_model()
-        #
+        inner_model = self._get_inner_model(X.shape[1], y.shape[1], retrofit=retrofit)
+
+        inner_model.compile(optimizer='adam', loss='MeanSquaredError', metrics=['RootMeanSquaredError'])
+        epochs = epochs or 100
+        validation_split = validation_split or 0.2
+
+        history = inner_model.fit(X, y, epochs=epochs, verbose=2, validation_split=validation_split)
+
         self._data_processor.write_scaler(self.model_id, scaler)
-        # return history.history
-        return []
+        self._data_processor.write_inner_model(self.model_id, inner_model)
+        return history.history
 
     def predict(self, inputs, indicators=None, get_graph=False, graph_data=None):
         self.inputs_pred = inputs
@@ -239,15 +243,25 @@ class Model:
 
         return indicator_id
 
-    def get_inner_model(self, retrofit=False):
-        pass
-        #     folder_name = "model"
+    def _get_inner_model(self, inputs_number, outputs_number, retrofit=False):
+
+        if retrofit:
+            inner_model = self._data_processor.read_inner_model()
+            if not inner_model:
+                inner_model = self._create_inner_model(inputs_number, outputs_number)
+        else:
+            inner_model = self._create_inner_model(inputs_number, outputs_number)
+
+        return inner_model
+
+
+        # folder_name = "model"
         #     if renew or not self._model_is_set:
         #         create = False
         #
         #         if not renew:
         #             if os.path.isdir(folder_name):
-        #                 self.model = self.model = keras.models.load_model(folder_name)
+        #                 self.model = self.model =
         #             elif not do_not_create:
         #                 create = True
         #         else:
@@ -258,6 +272,15 @@ class Model:
 
         #     folder_name = "model"
         #     self.model.save(folder_name)
+
+    def _create_inner_model(self, inputs_number, outputs_number):
+        model = Sequential()
+        model.add(Dense(500, activation="relu", input_shape=(inputs_number,), name='dense_1'))
+        model.add(Dense(250, activation="relu", name='dense_2'))
+        model.add(Dense(100, activation="relu", name='dense_3'))
+        model.add(Dense(outputs_number, activation="linear", name='dense_4'))
+
+        return model
 
 
 class DataProcessor:
@@ -344,13 +367,39 @@ class DataProcessor:
         return pickle.loads(scaler_packed)
 
     def write_inner_model(self, model_id, inner_model):
-        scaler_packed = pickle.dumps(inner_model, protocol=pickle.HIGHEST_PROTOCOL)
-        self._db_connector.write_model_scaler(model_id, scaler_packed)
+        if not os.path.isdir('tmp'):
+            os.mkdir('tmp')
+
+        inner_model.save('tmp/model')
+
+        zipf = zipfile.ZipFile('tmp/model.zip', 'w', zipfile.ZIP_DEFLATED)
+        self._zipdir('tmp/model', zipf)
+        zipf.close()
+
+        with open('tmp/model.zip', 'rb') as f:
+            model_packed = f.read()
+
+        self._db_connector.write_inner_model(model_id, model_packed)
+
+        os.remove('tmp/model.zip')
+        shutil.rmtree('tmp/model')
 
     def read_inner_model(self, model_id):
-        model_description = self.read_model_description_from_db(self.model_id)
-        scaler_packed = model_description['scaler']
-        return pickle.loads(scaler_packed)
+
+        if not os.path.isdir('tmp'):
+            os.mkdir('tmp')
+
+        model_description = self.read_model_description_from_db(model_id)
+        inner_model = model_description['inner_model']
+        with open('tmp/model.zip', 'wb') as f:
+            f.write(inner_model)
+
+        with zipfile.ZipFile('tmp/model.zip', 'r') as zip_h:
+            zip_h.extractall('tmp/model')
+
+        inner_model = keras.models.load_model('tmp/model')
+
+        return inner_model
 
     def _prepare_dataset_merge(self, dataset, indicators):
 
@@ -462,6 +511,18 @@ class DataProcessor:
                     + str(indicator)] = dataset[field_name].apply(lambda x: 1 if x == indicator else 0)
         # dataset.drop([field_name], axis=1, inplace=True)
         return dataset
+
+    @staticmethod
+    def _zipdir(path, ziph):
+        # ziph is zipfile handle
+        for root, dirs, files in os.walk(path):
+            c_dir = root
+            c_dir = 'tmp/' + c_dir[10:]
+
+            for file in files:
+                ziph.write(os.path.join(root, file),
+                           os.path.relpath(os.path.join(c_dir, file),
+                                           os.path.join(path, '..')))
 
 
 def load_data(parameters):
