@@ -63,24 +63,7 @@ class ModelProcessor:
         self.model.fit(parameters.get('epochs'), parameters.get('validation_split'))
 
     #
-    # @staticmethod
-    # def _get_scaler(model_name='', renew=False, do_not_create=False):
-    #
-    #     scaler_filename = "scaler.save"
-    #
-    #     # if not os.path.exists("models"):
-    #     #     os.mkdir('models')
-    #     scaler = None
-    #
-    #     if not renew:
-    #         if os.path.isfile(scaler_filename):
-    #             scaler = joblib.load(scaler_filename)
-    #         elif not do_not_create:
-    #             scaler = MinMaxScaler()
-    #     else:
-    #         scaler = MinMaxScaler()
-    #
-    #     return scaler
+
     #
     # def _set_model(self, model_name='', renew=False, do_not_create=False):
     #
@@ -213,7 +196,10 @@ class Model:
                            'scenarios': self.scenarios,
                            'x_columns': self.x_columns,
                            'y_columns': self.y_columns}
-        X, y = self._data_processor.get_X_y_for_fitting(inputs, outputs, additional_data)
+        X, y, x_columns, y_columns = self._data_processor.get_X_y_for_fitting(inputs, outputs, additional_data)
+        self.x_columns = x_columns
+        self.y_columns = y_columns
+
         # scaler = self._get_scaler()
         # self.X_scaled = scaler.fit_transform(self.X)
         #
@@ -245,6 +231,19 @@ class Model:
 
         return self.y_pd_pred.to_dict('records'), graph_bin
 
+    def _get_scaler(retrofit=False):
+
+        scaler = None
+
+        if not renew:
+            if os.path.isfile(scaler_filename):
+                scaler = joblib.load(scaler_filename)
+            elif not do_not_create:
+                scaler = MinMaxScaler()
+        else:
+            scaler = MinMaxScaler()
+
+        return scaler
 
 class DataProcessor:
 
@@ -275,7 +274,7 @@ class DataProcessor:
     def get_indicator_from_name_type(self, indicator, report_type):
         indicator_line = self._db_connector.read_indicator_from_name_type(indicator, report_type)
         if not indicator_line:
-            indicator_id = settings_controller.get_id()
+            indicator_id = 'ind_' + settings_controller.get_id()
             indicator_line = {'indicator_id': indicator_id, 'indicator': indicator, 'report_type': report_type}
             self._db_connector.write_indicator(indicator_line)
 
@@ -301,23 +300,33 @@ class DataProcessor:
 
         input_data_col = self._prepare_dataset_merge(inputs, additional_data['x_indicators'])
         output_data_col = self._prepare_dataset_merge(outputs, additional_data['y_indicators'])
-        input_data_col, output_data_col = self._fill_empty_lines(input_data_col, output_data_col)
 
-        input_data_col = self._prepare_dataset_sort_one_hot(input_data_col)
-        output_data_col = self._prepare_dataset_sort_one_hot(output_data_col)
+        additional_data['years'] = list(set([self._get_year(period) for period in additional_data['periods']]))
+        input_data_col, output_data_col = self._fill_empty_lines(input_data_col, output_data_col, additional_data)
 
-        input_data_col.drop(['Organisation', 'Scenario', 'year'], axis=1, inplace=True)
-        output_data_col.drop(['Organisation', 'Scenario', 'year'], axis=1, inplace=True)
+        input_data_col = self._prepare_dataset_sort_one_hot(input_data_col, additional_data)
+
+        input_data_col.drop(['organisation', 'scenario', 'year'], axis=1, inplace=True)
+        output_data_col.drop(['organisation', 'scenario', 'year'], axis=1, inplace=True)
+        x_columns = list(input_data_col.columns)
+        y_columns = list(output_data_col.columns)
 
         X = input_data_col.to_numpy()
         y = output_data_col.to_numpy()
 
-        return X, y
+        return X, y, x_columns, y_columns
+
+    def write_columns(self, model_id, x_columns, y_columns):
+        self._db_connector.write_model_columns(model_id, x_columns, y_columns)
 
     def _prepare_dataset_merge(self, dataset, indicators):
 
         pd_dataset = pd.DataFrame(dataset)
         pd_dataset = self._add_month_year_to_data(pd_dataset)
+
+        pd_dataset.drop(['_id', 'indicator', 'report_type'], axis=1, inplace=True)
+        pd_dataset.rename({'indicator_id': 'indicator'}, axis=1, inplace=True)
+
         dataset_col, raw_dataset_grouped = self._group_dataset(pd_dataset)
         raw_dataset_grouped = self._add_month_year_to_data(raw_dataset_grouped)
         raw_dataset_grouped.drop(['period'], axis=1, inplace=True)
@@ -328,7 +337,6 @@ class DataProcessor:
     def _prepare_dataset_sort_one_hot(self, dataset, additional_data):
         dataset = dataset.sort_values(by=['organisation', 'scenario', 'year'])
         fields_dict = {'organisation': additional_data['organisations'],
-                       'scenario': additional_data['scenarios'],
                        'year': additional_data['years']}
         for field_name, field_values in fields_dict.items():
             dataset = self._one_hot_encode(dataset, field_name, field_values)
@@ -365,7 +373,12 @@ class DataProcessor:
         raw_data_grouped = dataset.groupby(['organisation',
                                             'scenario',
                                             'period',
-                                            'indicator'], as_index=False).avg()
+                                            'indicator'], as_index=False)
+        raw_data_grouped = raw_data_grouped.sum()
+        raw_data_grouped_count = raw_data_grouped.count()
+
+        raw_data_grouped['value'] = raw_data_grouped['value']/raw_data_grouped_count['value']
+
         raw_data_grouped = raw_data_grouped[['organisation',
                                              'scenario',
                                              'period',
@@ -422,7 +435,7 @@ class DataProcessor:
         indicator_from_db = self._db_connector.read_indicator_from_name_type(indicator, report_type)
 
         if not indicator_from_db:
-            indicator_id = settings_controller.get_id()
+            indicator_id = 'ind_' + settings_controller.get_id()
             self._db_connector.write_indicator(indicator_id, indicator, report_type)
         else:
             indicator_id = indicator_from_db['indicator_id']

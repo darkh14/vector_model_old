@@ -77,6 +77,13 @@ class Connector:
     def write_model_description(self, model_description):
         self._write_line('models', model_description, ['model_id'])
 
+    def write_model_columns(self, model_id, x_columns, y_columns):
+        model_description = self.read_model_description(model_id)
+        model_description['x_columns'] = x_columns
+        model_description['y_columns'] = y_columns
+
+        self.write_model_description(model_description)
+
     def read_data_with_indicators_filter(self, indicators):
         collection = self.get_collection('raw_data')
         return list(collection.find({'indicator_id': {'$in': indicators}}))
@@ -105,14 +112,6 @@ class Connector:
         job_filter = {'job_id': job_id}
         lines = self.read_jobs(job_filter, limit=1)
         return lines[0] if lines else None
-
-    def write_additional_model_data(self, data, model_name='', rewrite=False):
-        for data_name, data_list in data.items():
-            self._write_data([{'value': data_element}for data_element in data_list], data_name, rewrite, ['value'])
-
-    def read_additional_data(self, names, model_name=''):
-        values = [[item['value'] for item in self._read_data(name)] for name in names]
-        return dict(zip(names, values))
 
     def delete_jobs(self, del_filter):
         self._delete_lines('background_jobs', del_filter)

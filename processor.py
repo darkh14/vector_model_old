@@ -126,19 +126,19 @@ class Processor:
 def process(environ, start_response):
 
     processor = Processor()
-    try:
-        output = processor.process(environ, start_response)
-    except ProcessorException as e:
-        output = dict()
-        output['status'] = 'error'
-        output['error_text'] = str(e)
-        output = processor.transform_output_parameters_to_str(output, start_response=start_response)
-    except Exception as e:
-        output = dict()
-        output['status'] = 'error'
-        output['error_text'] = traceback.format_exc()
-        output = processor.transform_output_parameters_to_str(output, start_response=start_response)
-
+    # try:
+    #     output = processor.process(environ, start_response)
+    # except ProcessorException as e:
+    #     output = dict()
+    #     output['status'] = 'error'
+    #     output['error_text'] = str(e)
+    #     output = processor.transform_output_parameters_to_str(output, start_response=start_response)
+    # except Exception as e:
+    #     output = dict()
+    #     output['status'] = 'error'
+    #     output['error_text'] = traceback.format_exc()
+    #     output = processor.transform_output_parameters_to_str(output, start_response=start_response)
+    output = processor.process(environ, start_response)
     return output
 
 
