@@ -90,12 +90,12 @@ class Processor:
 
         return True
 
-    def transform_output_parameters_to_str(self, output, f_start_response=None):
+    def transform_output_parameters_to_str(self, output, start_response=None):
 
         output_str = json.dumps(output, ensure_ascii=False).encode()
         output_len = len(output_str)
 
-        _start_response = f_start_response or self._start_response
+        _start_response = start_response or self._start_response
 
         _start_response('200 OK', [('Content-type', 'text/html'), ('Content-Length', str(output_len))])
 
@@ -123,7 +123,10 @@ class Processor:
         return json.loads(x_str)
 
 
-def process(environ, start_response):
+def process(environ, start_response=None):
+
+    if not start_response:
+        start_response = f_start_response
 
     processor = Processor()
     # try:
@@ -142,7 +145,7 @@ def process(environ, start_response):
     return output
 
 
-def start_response():
+def f_start_response():
     pass
 
 
@@ -155,12 +158,11 @@ def process_with_parameters(parameters):
         output = dict()
         output['status'] = 'error'
         output['error_text'] = str(e)
-        output = processor.transform_output_parameters_to_str(output)
+
     except Exception as e:
         output = dict()
         output['status'] = 'error'
         output['error_text'] = traceback.format_exc()
-        output = processor.transform_output_parameters_to_str(output)
 
     print(output)
     return output
