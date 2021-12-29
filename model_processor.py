@@ -19,6 +19,7 @@ import base64
 import pickle
 import zipfile
 import shutil
+import datetime
 
 DB_CONNECTOR = None
 
@@ -56,8 +57,12 @@ class ModelProcessor:
                            model_description['x_indicators'],
                            model_description['y_indicators'],
                            need_to_update=need_to_update)
-
-        history = self.model.fit(parameters.get('epochs'), parameters.get('validation_split'))
+        retrofit = parameters.get('retrofit')
+        date_from = parameters.get('date_from')
+        history = self.model.fit(parameters.get('epochs'),
+                                 parameters.get('validation_split'),
+                                 retrofit=retrofit,
+                                 date_from=date_from)
 
         return history
 
@@ -139,10 +144,18 @@ class Model:
             self._data_processor.write_model_to_db(model_description)
             self.need_to_update = False
 
-    def fit(self, epochs=100, validation_split=0.2, retrofit=False):
+    def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
 
-        inputs, outputs = self._data_processor.read_inputs_outputs_from_raw_data(self.x_indicators, self.y_indicators)
-        self.update_model(inputs, outputs)
+        if not retrofit:
+            date_from = None
+        else:
+            date_from = datetime.datetime.strptime(date_from, '%d.%m.%Y')
+
+        inputs, outputs = self._data_processor.read_inputs_outputs_from_raw_data(self.x_indicators,
+                                                                                 self.y_indicators,
+                                                                                 date_from)
+        if not retrofit:
+            self.update_model(inputs, outputs)
 
         additional_data = {'x_indicators': self.x_indicators,
                            'y_indicators': self.y_indicators,
@@ -308,9 +321,9 @@ class DataProcessor:
 
         return indicator_line
 
-    def read_inputs_outputs_from_raw_data(self, x_indicators, y_indicators):
-        inputs = self._db_connector.read_data_with_indicators_filter(x_indicators)
-        outputs = self._db_connector.read_data_with_indicators_filter(y_indicators)
+    def read_inputs_outputs_from_raw_data(self, x_indicators, y_indicators, date_from):
+        inputs = self._db_connector.read_data_with_indicators_filter(x_indicators, date_from)
+        outputs = self._db_connector.read_data_with_indicators_filter(y_indicators, date_from)
         return inputs, outputs
 
     @staticmethod

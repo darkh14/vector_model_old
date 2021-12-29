@@ -96,9 +96,12 @@ class Connector:
 
         self.write_model_description(model_description)
 
-    def read_data_with_indicators_filter(self, indicators):
+    def read_data_with_indicators_filter(self, indicators, date_from):
         collection = self.get_collection('raw_data')
-        return list(collection.find({'indicator_id': {'$in': indicators}}))
+        db_filter = {'indicator_id': {'$in': indicators}}
+        if date_from:
+            db_filter['loading_date'] = {'$gte': date_from}
+        return list(collection.find(db_filter))
 
     def write_job(self, job_line):
         self._write_line('background_jobs', job_line, ['job_id'])
