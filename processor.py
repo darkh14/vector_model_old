@@ -90,12 +90,12 @@ class Processor:
 
         return True
 
-    def transform_output_parameters_to_str(self, output, start_response=None):
+    def transform_output_parameters_to_str(self, output, f_start_response=None):
 
         output_str = json.dumps(output, ensure_ascii=False).encode()
         output_len = len(output_str)
 
-        _start_response = start_response or self._start_response
+        _start_response = f_start_response or self._start_response
 
         _start_response('200 OK', [('Content-type', 'text/html'), ('Content-Length', str(output_len))])
 
