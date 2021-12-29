@@ -154,8 +154,10 @@ class Model:
         inputs, outputs = self._data_processor.read_inputs_outputs_from_raw_data(self.x_indicators,
                                                                                  self.y_indicators,
                                                                                  date_from)
-        if not retrofit:
-            self.update_model(inputs, outputs)
+        if retrofit and self.need_to_update:
+            raise ProcessorException('Model can not be updated when retrofit')
+
+        self.update_model(inputs, outputs)
 
         additional_data = {'x_indicators': self.x_indicators,
                            'y_indicators': self.y_indicators,
