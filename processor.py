@@ -155,12 +155,12 @@ def process_with_parameters(parameters):
         output = dict()
         output['status'] = 'error'
         output['error_text'] = str(e)
-        output = processor.transform_output_parameters_to_str(output, start_response=start_response)
+        output = processor.transform_output_parameters_to_str(output)
     except Exception as e:
         output = dict()
         output['status'] = 'error'
         output['error_text'] = traceback.format_exc()
-        output = processor.transform_output_parameters_to_str(output, start_response=start_response)
+        output = processor.transform_output_parameters_to_str(output)
 
     print(output)
     return output
