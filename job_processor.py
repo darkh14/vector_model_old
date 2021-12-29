@@ -199,7 +199,6 @@ class StdOutErrLogger:
 def execute_method(system_parameters):
 
     try:
-
         job_id = str(uuid.UUID(system_parameters[2]))
 
         db_connector = JobProcessor.get_db_connector({'db_id': system_parameters[4]})
@@ -208,41 +207,52 @@ def execute_method(system_parameters):
             return {'status': 'error', 'error_text': 'db connector is not created'}
 
         job_line = db_connector.read_job(job_id)
+    except Exception:
 
-        if job_line and job_line['status'] == 'created':
-            job_line['status'] = 'started'
-            db_connector.write_job(job_line)
+        error_text = traceback.format_exc()
+        sys.stderr.write(error_text)
 
-            module_name, function_name = tuple(system_parameters[3].split('.'))
+        return {'status': 'error', 'error_text': error_text}
 
-            imported_module = import_module(module_name)
-            print(imported_module)
-            imported_function = imported_module.__dict__[function_name]
-            print(imported_function)
-            function_parameters = job_line['parameters'].copy()
-            function_parameters['background_job'] = False
-            print(function_parameters)
-            result = imported_function(function_parameters)
+    if not job_line or job_line['status'] != 'created':
+        return {'status': 'error', 'error_text': 'job line not found'}
+    try:
 
-            logger = StdOutErrLogger(job_id)
-            out, err = logger.read_logs()
+        job_line['status'] = 'started'
+        db_connector.write_job(job_line)
 
-            job_line['finish_date'] = datetime.now()
-            job_line['status'] = 'finished'
-            job_line['result'] = result
+        module_name, function_name = tuple(system_parameters[3].split('.'))
 
-            job_line['output'] = out
-            job_line['error'] = err
+        imported_module = import_module(module_name)
+        print(imported_module)
+        imported_function = imported_module.__dict__[function_name]
+        print(imported_function)
+        function_parameters = job_line['parameters'].copy()
+        function_parameters['background_job'] = False
+        print(function_parameters)
+        result = imported_function(function_parameters)
 
-            db_connector.write_job(job_line)
+        logger = StdOutErrLogger(job_id)
+        out, err = logger.read_logs()
 
-        else:
-            result = {'status': 'error', 'error_text': 'job line not found'}
+        job_line['finish_date'] = datetime.now()
+        job_line['status'] = 'finished'
+        job_line['result'] = result
+
+        job_line['output'] = out
+        job_line['error'] = err
+
+        db_connector.write_job(job_line)
 
     except Exception:
 
         error_text = traceback.format_exc()
         sys.stderr.write(error_text)
+
+        job_line['status'] = 'error'
+        job_line['error'] = error_text
+
+        db_connector.write_job(job_line)
 
         result = {'status': 'error', 'error_text': error_text}
 
