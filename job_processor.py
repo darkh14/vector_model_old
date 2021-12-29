@@ -165,8 +165,6 @@ class StdOutErrLogger:
         for file_path in file_list:
             c_job_id = file_path[4:-4]
 
-            # job_line = self._db_connector.read_job(c_job_id)
-            # if not job_line or (job_line and job_line['status'] != 'started'):
             os.remove(os.path.join(self._dir_name, file_path))
 
     def read_logs(self):

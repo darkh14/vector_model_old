@@ -1,12 +1,11 @@
-from typing import Dict, Union, Any
-
+import settings_controller
 from logger import ProcessorException as ProcessorException
 import db_connector
 import numpy as np
 
 import pandas as pd
 import os
-import joblib
+
 from job_processor import JobProcessor
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
@@ -17,258 +16,442 @@ from tensorflow import keras
 import matplotlib.pyplot as plt
 import base64
 
+import pickle
+import zipfile
+import shutil
+import datetime
+
+DB_CONNECTOR = None
+
 
 class ModelProcessor:
 
     def __init__(self, parameters):
-        self.db_connector = None
-        self.inputs = []
-        self.inputs_pred = []
-        self.outputs = []
-        self._additional_data = {'periods': [],
-                                'organisations': [],
-                                'scenarios': [],
-                                'years': [],
-                                'x_indicators': [],
-                                'y_indicators': []}
-        self._data_is_set = False
-        self._additional_data_is_set = False
-        self._columns = {'x_columns': [],
-                         'y_columns': []}
-        self._columns_is_set = False
-        self._parameters = parameters
-        self.X = np.array([[]])
-        self.X_scaled = np.array([[]])
-        self.y = np.array([])
-        self.X_pred = np.array([[]])
-        self.X_pd_pred = pd.DataFrame(np.array([[]]))
-        self.y_pd_pred = pd.DataFrame(np.array([[]]))
+
+        set_db_connector(parameters)
+        self._data_processor = DataProcessor()
+
         self.model = None
-        self._model_is_set = False
-        self.graph_file_name = 'graph.png'
+
+    def load_data(self, parameters):
+
+        raw_data = parameters.get('data')
+
+        if not raw_data:
+            raise ProcessorException('"data" is not found in parameters')
+
+        overwrite = parameters.get('overwrite')
+
+        self._data_processor.load_data(raw_data, overwrite=overwrite)
 
     def fit(self, parameters):
+        model_description = parameters.get('model')
 
-        epochs = parameters.get('epochs') or 10
-        validation_split = parameters.get('validation_split') or 0.2
+        if not model_description:
+            raise ProcessorException('model is not in parameters')
 
-        if not self.db_connector:
-            self.db_connector = db_connector.Connector(self._parameters, initialize=True)
+        need_to_update = bool(parameters.get('need_to_update'))
 
-        self.X, self.y = self.db_connector.read_x_y()
-        scaler = self._get_scaler()
-        self.X_scaled = scaler.fit_transform(self.X)
+        self.model = Model(model_description['id'],
+                           model_description['name'],
+                           model_description['x_indicators'],
+                           model_description['y_indicators'],
+                           need_to_update=need_to_update)
+        retrofit = parameters.get('retrofit')
+        date_from = parameters.get('date_from')
+        history = self.model.fit(parameters.get('epochs'),
+                                 parameters.get('validation_split'),
+                                 retrofit=retrofit,
+                                 date_from=date_from)
 
-        self._set_model(renew=True)
-        self.model.compile(optimizer='adam', loss='MeanSquaredError', metrics=['RootMeanSquaredError'])
-        history = self.model.fit(self.X_scaled, self.y, epochs=epochs, verbose=2, validation_split=validation_split)
+        return history
 
-        self._save_model()
+    def predict(self, parameters):
 
+        model_description = parameters.get('model')
+
+        if not model_description:
+            raise ProcessorException('model is not in parameters')
+
+        self.model = Model(model_description['id'])
+
+        inputs = parameters.get('inputs')
+        if not inputs:
+            raise ProcessorException('inputs not found in parameters')
+
+        get_graph = parameters.get('get_graph')
+        graph_data = parameters.get('graph_data')
+
+        prediction, y_columns, graph_bin = self.model.predict(inputs, get_graph=get_graph, graph_data=graph_data)
+
+        return prediction, y_columns, graph_bin
+
+
+class Model:
+
+    def __init__(self, model_id, name='', x_indicators=None, y_indicators=None, need_to_update=False):
+        self.model_id = model_id
+        self._db_connector = DB_CONNECTOR
+        self._data_processor = DataProcessor()
+        description_from_db = self._data_processor.read_model_description_from_db(self.model_id)
+
+        if description_from_db:
+            self.name = description_from_db['name']
+            self.x_indicators = description_from_db['x_indicators']
+            self.y_indicators = description_from_db['y_indicators']
+            self.periods = description_from_db['periods']
+            self.organisations = description_from_db['organisations']
+            self.scenarios = description_from_db['scenarios']
+            self.x_columns = description_from_db['x_columns']
+            self.y_columns = description_from_db['y_columns']
+        else:
+            self.name = name
+            self.x_indicators = []
+            self.y_indicators = []
+            self.periods = []
+            self.organisations = []
+            self.scenarios = []
+            self.x_columns = []
+            self.y_columns = []
+
+        if x_indicators:
+            self.x_indicators = self._data_processor.get_indicator_ids(x_indicators)
+
+        if y_indicators:
+            self.y_indicators = self._data_processor.get_indicator_ids(y_indicators)
+
+        self.need_to_update = not description_from_db or need_to_update
+        self.graph_file_name = 'graph.png'
+
+    def update_model(self, inputs, outputs):
+        if self.need_to_update:
+            data = inputs + outputs
+            organisations, scenarios, periods = self._data_processor.get_additional_data(data)
+            self.periods = periods
+            self.organisations = organisations
+            self.scenarios = scenarios
+
+            model_description = {'model_id': self.model_id,
+                                 'name': self.name,
+                                 'x_indicators': self.x_indicators,
+                                 'y_indicators': self.y_indicators,
+                                 'periods': self.periods,
+                                 'organisations': self.organisations,
+                                 'scenarios': self.scenarios,
+                                 'x_columns': self.x_columns,
+                                 'y_columns': self.y_columns}
+
+            self._data_processor.write_model_to_db(model_description)
+            self.need_to_update = False
+
+    def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
+
+        if not retrofit:
+            date_from = None
+        else:
+            date_from = datetime.datetime.strptime(date_from, '%d.%m.%Y')
+
+        inputs, outputs = self._data_processor.read_inputs_outputs_from_raw_data(self.x_indicators,
+                                                                                 self.y_indicators,
+                                                                                 date_from)
+        if not retrofit:
+            self.update_model(inputs, outputs)
+
+        additional_data = {'x_indicators': self.x_indicators,
+                           'y_indicators': self.y_indicators,
+                           'periods': self.periods,
+                           'organisations': self.organisations,
+                           'scenarios': self.scenarios,
+                           'x_columns': self.x_columns,
+                           'y_columns': self.y_columns}
+        X, y, x_columns, y_columns = self._data_processor.get_X_y_for_fitting(inputs, outputs, additional_data)
+        self.x_columns = x_columns
+        self.y_columns = y_columns
+        if not retrofit:
+            self._data_processor.write_columns(self.model_id, x_columns, y_columns)
+
+        scaler = self._get_scaler(retrofit=retrofit)
+        X = scaler.fit_transform(X)
+
+        inner_model = self._get_inner_model(X.shape[1], y.shape[1], retrofit=retrofit)
+
+        inner_model.compile(optimizer='adam', loss='MeanSquaredError', metrics=['RootMeanSquaredError'])
+        epochs = epochs or 100
+        validation_split = validation_split or 0.2
+
+        history = inner_model.fit(X, y, epochs=epochs, verbose=2, validation_split=validation_split)
+
+        self._data_processor.write_scaler(self.model_id, scaler)
+        self._data_processor.write_inner_model(self.model_id, inner_model)
         return history.history
 
     def predict(self, inputs, indicators=None, get_graph=False, graph_data=None):
-        self.inputs_pred = inputs
-        self.prepare_data(for_prediction=True)
-        self.read_columns()
-        self._set_model()
-        y = self.model.predict(self.X_pred)
-        self.y_pd_pred = pd.DataFrame(y, columns=self._columns['y_columns'])
+
+        additional_data = {'x_indicators': self.x_indicators,
+                           'y_indicators': self.y_indicators,
+                           'periods': self.periods,
+                           'organisations': self.organisations,
+                           'scenarios': self.scenarios,
+                           'x_columns': self.x_columns,
+                           'y_columns': self.y_columns}
+
+        X = self._data_processor.get_X_for_prediction(inputs, additional_data)
+
+        scaler = self._get_scaler(True)
+        X = scaler.fit_transform(X)
+
+        inner_model = self._get_inner_model(retrofit=True)
+        y = inner_model.predict(X)
+
+        y_pd = pd.DataFrame(y, columns=self.y_columns)
 
         graph_bin = None
         if get_graph:
-            x_graph = self._get_dataframe_for_graph(self.X_pd_pred, graph_data['x_indicator'])
-            y_graph = self._get_dataframe_for_graph(self.y_pd_pred, graph_data['y_indicator'])
+            X_pd = pd.DataFrame(X, columns=self.x_columns)
+            x_graph = self._get_dataframe_for_graph(X_pd, graph_data['x_indicator'])
+            y_graph = self._get_dataframe_for_graph(y_pd, graph_data['y_indicator'])
 
             self._make_graph(x_graph, y_graph, graph_data['x_indicator'], graph_data['y_indicator'])
 
             graph_bin = self.read_graph_file()
 
-        return self.y_pd_pred.to_dict('records'), graph_bin
+        return y_pd.to_dict('records'), self.y_columns, graph_bin
 
-    def write_data(self, inputs, outputs):
+    def _get_scaler(self, retrofit=False):
 
-        self.set_data(inputs, outputs)
-        if not self.db_connector:
-            self.db_connector = db_connector.Connector(self._parameters, initialize=True)
-
-        self.db_connector.write_model_data(inputs, outputs, rewrite=True)
-
-    def read_data(self, reset=False):
-
-        if reset or not self._data_is_set:
-            if not self.db_connector:
-                self.db_connector = db_connector.Connector(self._parameters, initialize=True)
-
-            self.inputs, self.outputs = self.db_connector.read_model_data()
-            self._data_is_set = True
-
-    def set_data(self, inputs, outputs):
-        self.inputs = inputs
-        self.outputs = outputs
-        self._data_is_set = True
-
-    def write_additional_data(self):
-        if not self._data_is_set:
-            raise ProcessorException('data is not set')
-
-        self.set_additional_data()
-        self.db_connector.write_additional_model_data(self._additional_data, rewrite=True)
-
-    def read_additional_data(self, reset=False):
-
-        if reset or not self._additional_data_is_set:
-            if not self.db_connector:
-                self.db_connector = db_connector.Connector(self._parameters, initialize=True)
-            names_list = ['periods', 'organisations', 'scenarios', 'years', 'x_indicators', 'y_indicators']
-            self._additional_data = self.db_connector.read_additional_data(names_list)
-            self._additional_data_is_set = True
-
-    def write_columns(self, inputs, outputs, rewrite=True):
-        if not self._data_is_set:
-            raise ProcessorException('data is not set')
-
-        self.set_columns(inputs, outputs)
-        self.db_connector.write_additional_model_data(self._columns, rewrite=rewrite)
-
-    def set_additional_data(self, reset=False):
-
-        if reset or not self._additional_data_is_set:
-            p_inputs = pd.DataFrame(self.inputs)
-            p_outputs = pd.DataFrame(self.outputs)
-            x_periods = p_inputs['Period'].unique()
-            y_periods = p_outputs['Period'].unique()
-            x_organisations = p_inputs['Organisation'].unique()
-            y_organisations = p_outputs['Organisation'].unique()
-            x_scenarios = p_inputs['Scenario'].unique()
-            y_scenarios = p_outputs['Scenario'].unique()
-            x_indicators = p_inputs['Indicator'].unique()
-            y_indicators = p_outputs['Indicator'].unique()
-
-            periods = self._make_x_y_list(x_periods, y_periods)
-            organisations = self._make_x_y_list(x_organisations, y_organisations)
-            scenarios = self._make_x_y_list(x_scenarios, y_scenarios)
-
-            years = map(lambda period: int(period.split('.')[2]), periods)
-            years = list(set(years))
-
-            names_list = ['periods', 'organisations', 'scenarios', 'years', 'x_indicators', 'y_indicators']
-
-            values_list = [periods, organisations, scenarios, years, x_indicators, y_indicators]
-
-            self._additional_data = dict(zip(names_list, values_list))
-
-            self._additional_data_is_set = True
-
-    def set_columns(self, inputs, outputs, reset=False):
-
-        if reset or not self._columns_is_set:
-
-            x_columns = list(inputs.columns)
-            y_columns = list(outputs.columns)
-
-            names_list = ['x_columns', 'y_columns']
-
-            values_list = [x_columns, y_columns]
-
-            self._columns = dict(zip(names_list, values_list))
-
-            self._columns_is_set = True
-
-    def read_columns(self, reset=False):
-
-        if reset or not self._columns_is_set:
-            if not self.db_connector:
-                self.db_connector = db_connector.Connector(self._parameters, initialize=True)
-
-            self._columns = self.db_connector.read_additional_data(['x_columns', 'y_columns'])
-            self._columns_is_set = True
-
-    def prepare_data(self, for_prediction=False):
-
-        if not for_prediction:
-            self.read_data()
-            self.write_additional_data()
+        if retrofit:
+            scaler = self._data_processor.read_scaler(self.model_id)
+            if not scaler:
+                scaler = MinMaxScaler()
         else:
-            self.read_additional_data()
+            scaler = MinMaxScaler()
 
-        inputs = self.inputs_pred if for_prediction else self.inputs
-        input_data_col = self._prepare_dataset_merge(inputs, self._additional_data['x_indicators'])
-        if not for_prediction:
-            output_data_col = self._prepare_dataset_merge(self.outputs, self._additional_data['y_indicators'])
+        return scaler
 
-        if not for_prediction:
-            input_data_col, output_data_col = self._fill_empty_lines(input_data_col, output_data_col)
+    def _get_inner_model(self, inputs_number=0, outputs_number=0, retrofit=False):
+
+        if retrofit:
+            inner_model = self._data_processor.read_inner_model(self.model_id)
+            if not inner_model:
+                inner_model = self._create_inner_model(inputs_number, outputs_number)
         else:
-            input_data_col = input_data_col.fillna(0)
+            inner_model = self._create_inner_model(inputs_number, outputs_number)
 
-        input_data_col = self._prepare_dataset_sort_one_hot(input_data_col)
-        if not for_prediction:
-            output_data_col = self._prepare_dataset_sort_one_hot(output_data_col)
-            self.db_connector.write_model_pd_data(input_data_col, output_data_col, rewrite=True)
-            output_data_col.drop(['PortionNumber', 'Organisation', 'Scenario', 'year'], axis=1, inplace=True)
-            col_changing = [col for col in self._additional_data['y_indicators'] if col.split(' ')[-1] == 'изменение']
-            col_changing_months = np.array([[col + '_' + str(month) for month in range(1, 13)] for col in col_changing])
-            col_changing_months = list(col_changing_months.flatten())
-            output_data_col = output_data_col[col_changing_months]
-            y = output_data_col.to_numpy()
-            self.write_columns(input_data_col, output_data_col, rewrite=True)
+        return inner_model
 
-        input_data_col.drop(['PortionNumber', 'Organisation', 'Scenario', 'year'], axis=1, inplace=True)
+    @staticmethod
+    def _create_inner_model(inputs_number, outputs_number):
+        model = Sequential()
+        model.add(Dense(500, activation="relu", input_shape=(inputs_number,), name='dense_1'))
+        model.add(Dense(250, activation="relu", name='dense_2'))
+        model.add(Dense(100, activation="relu", name='dense_3'))
+        model.add(Dense(outputs_number, activation="linear", name='dense_4'))
+
+        return model
+
+    def _make_graph(self, x, y, x_label, y_label):
+
+        fig, ax = plt.subplots()
+
+        ax.plot(x, y) # , label='y_test')
+
+        ax.set_xlabel(x_label)
+        ax.set_ylabel(y_label)
+        # ax.legend()
+
+        # plt.show()
+        fig.savefig(self.graph_file_name)
+
+    def read_graph_file(self):
+
+        f = open(self.graph_file_name, 'rb')
+        result = f.read()
+        f.close()
+
+        return result
+
+    def _get_dataframe_for_graph(self, x, x_indicator):
+
+        indicator_description = self._data_processor.get_indicator_from_name_type(x_indicator['indicator'],
+                                                                                  x_indicator['report_type'])
+        columns = [indicator_description['indicator_id'] + '_' + str(number) for number in range(1, 13)]
+        result = x[columns]
+        result = result.sum(axis=1)
+
+        result = result/12
+        return np.array(result)
+
+
+class DataProcessor:
+
+    def __init__(self):
+
+        self._db_connector = DB_CONNECTOR
+
+    def load_data(self, raw_data, overwrite=False):
+        raw_data = self.add_indicators_to_raw_data(raw_data)
+        self._db_connector.write_raw_data(raw_data, overwrite=overwrite)
+
+    def add_indicators_to_raw_data(self, raw_data):
+        for line in raw_data:
+            indicator_id = self._get_indicator_id(line['indicator'], line['report_type'])
+            line['indicator_id'] = indicator_id
+
+        return raw_data
+
+    def read_model_description_from_db(self, model_id):
+        return self._db_connector.read_model_description(model_id)
+
+    def get_indicator_ids(self, indicators):
+
+        if not indicators:
+            return []
+
+        result = [self._db_connector.read_indicator_from_name_type(ind_line['indicator'],
+                                                                   ind_line['report_type'])['indicator_id']
+                  for ind_line in indicators]
+        return result
+
+    def get_indicator_from_name_type(self, indicator, report_type):
+        indicator_line = self._db_connector.read_indicator_from_name_type(indicator, report_type)
+        if not indicator_line:
+            indicator_id = 'ind_' + settings_controller.get_id()
+            indicator_line = {'indicator_id': indicator_id, 'indicator': indicator, 'report_type': report_type}
+            self._db_connector.write_indicator(indicator_line)
+
+        return indicator_line
+
+    def read_inputs_outputs_from_raw_data(self, x_indicators, y_indicators, date_from):
+        inputs = self._db_connector.read_data_with_indicators_filter(x_indicators, date_from)
+        outputs = self._db_connector.read_data_with_indicators_filter(y_indicators, date_from)
+        return inputs, outputs
+
+    @staticmethod
+    def get_additional_data(raw_data):
+        pd_data = pd.DataFrame(raw_data)
+        organisations, scenarios, periods = list(pd_data['organisation'].unique()),\
+                                            list(pd_data['scenario'].unique()), \
+                                            list(pd_data['period'].unique())
+        return organisations, scenarios, periods
+
+    def write_model_to_db(self, model_description):
+        self._db_connector.write_model_description(model_description)
+
+    def get_X_y_for_fitting(self, inputs, outputs, additional_data):
+
+        input_data_col = self._prepare_dataset_merge(inputs, additional_data['x_indicators'])
+        output_data_col = self._prepare_dataset_merge(outputs, additional_data['y_indicators'])
+
+        additional_data['years'] = list(set([self._get_year(period) for period in additional_data['periods']]))
+        input_data_col, output_data_col = self._fill_empty_lines(input_data_col, output_data_col, additional_data)
+
+        input_data_col = self._prepare_dataset_sort_one_hot(input_data_col, additional_data)
+
+        input_data_col.drop(['organisation', 'scenario', 'year'], axis=1, inplace=True)
+        output_data_col.drop(['organisation', 'scenario', 'year'], axis=1, inplace=True)
+        x_columns = list(input_data_col.columns)
+        y_columns = list(output_data_col.columns)
+
+        X = input_data_col.to_numpy()
+        y = output_data_col.to_numpy()
+
+        return X, y, x_columns, y_columns
+
+    def get_X_for_prediction(self, inputs, additional_data):
+
+        inputs = self.add_indicators_to_raw_data(inputs)
+        input_data_col = self._prepare_dataset_merge(inputs, additional_data['x_indicators'])
+
+        additional_data['years'] = list(set([self._get_year(period) for period in additional_data['periods']]))
+        input_data_col = input_data_col.fillna(0)
+
+        input_data_col = self._prepare_dataset_sort_one_hot(input_data_col, additional_data)
+
+        input_data_col.drop(['organisation', 'scenario', 'year'], axis=1, inplace=True)
 
         X = input_data_col.to_numpy()
 
-        if not for_prediction:
-            self.db_connector.write_x_y(X, y, rewrite=True)
-        else:
-            self.X_pred = X
-            self.X_pd_pred = input_data_col
+        return X
+
+    def write_columns(self, model_id, x_columns, y_columns):
+        self._db_connector.write_model_columns(model_id, x_columns, y_columns)
+
+    def write_scaler(self, model_id, scaler):
+        scaler_packed = pickle.dumps(scaler, protocol=pickle.HIGHEST_PROTOCOL)
+        self._db_connector.write_model_scaler(model_id, scaler_packed)
+
+    def read_scaler(self, model_id):
+        model_description = self.read_model_description_from_db(model_id)
+        scaler_packed = model_description['scaler']
+        return pickle.loads(scaler_packed)
+
+    def write_inner_model(self, model_id, inner_model):
+        if not os.path.isdir('tmp'):
+            os.mkdir('tmp')
+
+        inner_model.save('tmp/model')
+
+        zipf = zipfile.ZipFile('tmp/model.zip', 'w', zipfile.ZIP_DEFLATED)
+        self._zipdir('tmp/model', zipf)
+        zipf.close()
+
+        with open('tmp/model.zip', 'rb') as f:
+            model_packed = f.read()
+
+        self._db_connector.write_inner_model(model_id, model_packed)
+
+        os.remove('tmp/model.zip')
+        shutil.rmtree('tmp/model')
+
+    def read_inner_model(self, model_id):
+
+        if not os.path.isdir('tmp'):
+            os.mkdir('tmp')
+
+        model_description = self.read_model_description_from_db(model_id)
+        inner_model = model_description['inner_model']
+        with open('tmp/model.zip', 'wb') as f:
+            f.write(inner_model)
+
+        with zipfile.ZipFile('tmp/model.zip', 'r') as zip_h:
+            zip_h.extractall('tmp/model')
+
+        inner_model = keras.models.load_model('tmp/model')
+
+        return inner_model
 
     def _prepare_dataset_merge(self, dataset, indicators):
 
         pd_dataset = pd.DataFrame(dataset)
         pd_dataset = self._add_month_year_to_data(pd_dataset)
+
+        columns_to_drop = ['indicator', 'report_type']
+        if '_id' in list(pd_dataset.columns):
+            columns_to_drop.append('_id')
+        pd_dataset.drop(columns_to_drop, axis=1, inplace=True)
+        pd_dataset.rename({'indicator_id': 'indicator'}, axis=1, inplace=True)
+
         dataset_col, raw_dataset_grouped = self._group_dataset(pd_dataset)
         raw_dataset_grouped = self._add_month_year_to_data(raw_dataset_grouped)
-        raw_dataset_grouped.drop(['Period'], axis=1, inplace=True)
+        raw_dataset_grouped.drop(['period'], axis=1, inplace=True)
         dataset_col = self._merge_dataset(dataset_col, raw_dataset_grouped, indicators)
 
         return dataset_col
 
-    def _prepare_dataset_sort_one_hot(self, dataset):
-        dataset = dataset.sort_values(by=['Organisation', 'Scenario', 'year'])
-        fields_dict = {'Organisation': self._additional_data['organisations'],
-                       'Scenario': self._additional_data['scenarios'],
-                       'year': self._additional_data['years']}
+    def _prepare_dataset_sort_one_hot(self, dataset, additional_data):
+        dataset = dataset.sort_values(by=['organisation', 'scenario', 'year'])
+        fields_dict = {'organisation': additional_data['organisations'],
+                       'year': additional_data['years']}
         for field_name, field_values in fields_dict.items():
             dataset = self._one_hot_encode(dataset, field_name, field_values)
 
         return dataset
 
     def _add_month_year_to_data(self, dataset):
-        dataset['month'] = dataset['Period'].apply(self._get_month)
-        dataset['year'] = dataset['Period'].apply(self._get_year)
+        dataset['month'] = dataset['period'].apply(self._get_month)
+        dataset['year'] = dataset['period'].apply(self._get_year)
 
         return dataset
-
-    @staticmethod
-    def _group_dataset(dataset):
-
-        data_col = dataset.groupby(['PortionNumber', 'Organisation', 'Scenario', 'year'], as_index=False).sum()
-        data_col = data_col[['PortionNumber', 'Organisation', 'Scenario', 'year']]
-
-        raw_data_grouped = dataset.groupby(['PortionNumber',
-                                            'Organisation',
-                                            'Scenario',
-                                            'Period',
-                                            'Indicator'], as_index=False).sum()
-        raw_data_grouped = raw_data_grouped[['PortionNumber',
-                                             'Organisation',
-                                             'Scenario',
-                                             'Period',
-                                             'Indicator',
-                                             'Value']]
-        return data_col, raw_data_grouped
 
     @staticmethod
     def _merge_dataset(dataset, dataset_with_value, indicators):
@@ -276,34 +459,65 @@ class ModelProcessor:
         months = np.arange(1, 13)
         for indicator in indicators:
             for month in months:
-                dataset = pd.merge(dataset, dataset_with_value.loc[(dataset_with_value['Indicator'] == indicator)
+                dataset = pd.merge(dataset, dataset_with_value.loc[(dataset_with_value['indicator'] == indicator)
                                                                    & (dataset_with_value['month'] == month)],
-                                   on=['PortionNumber', 'Organisation', 'Scenario', 'year'], how='left')
-                dataset.rename(columns={'Value': indicator + '_' + str(month)}, inplace=True)
+                                   on=['organisation', 'scenario', 'year'], how='left')
+                dataset.rename(columns={'value': indicator + '_' + str(month)}, inplace=True)
                 dataset.drop(['month'], axis=1, inplace=True)
-                dataset.drop(['Indicator'], axis=1, inplace=True)
+                dataset.drop(['indicator'], axis=1, inplace=True)
 
         return dataset
 
-    def _fill_empty_lines(self, input_dataset, output_dataset):
-        for organisation in self._additional_data['organisations']:
-            for scenario in self._additional_data['scenarios']:
-                for year in self._additional_data['years']:
-                    x_lines = input_dataset.loc[(input_dataset['Organisation'] == organisation)
-                                                 & (input_dataset['Scenario'] == scenario)
+    @staticmethod
+    def _group_dataset(dataset):
+
+        data_col = dataset.groupby(['organisation', 'scenario', 'year'], as_index=False).sum()
+        data_col = data_col[['organisation', 'scenario', 'year']]
+
+        raw_data_grouped = dataset.groupby(['organisation',
+                                            'scenario',
+                                            'period',
+                                            'indicator'], as_index=False)
+        raw_data_grouped = raw_data_grouped.sum()
+        raw_data_grouped_count = raw_data_grouped.count()
+
+        raw_data_grouped['value'] = raw_data_grouped['value']/raw_data_grouped_count['value']
+
+        raw_data_grouped = raw_data_grouped[['organisation',
+                                             'scenario',
+                                             'period',
+                                             'indicator',
+                                             'value']]
+        return data_col, raw_data_grouped
+
+    @staticmethod
+    def _get_year(date_str):
+        return int(date_str.split('.')[2])
+
+    @staticmethod
+    def _get_month(date_str):
+        return int(date_str.split('.')[1])
+
+    @staticmethod
+    def _fill_empty_lines(input_dataset, output_dataset, additional_data):
+        for organisation in additional_data['organisations']:
+            for scenario in additional_data['scenarios']:
+                for year in additional_data['years']:
+                    x_lines = input_dataset.loc[(input_dataset['organisation'] == organisation)
+                                                 & (input_dataset['scenario'] == scenario)
                                                  & (input_dataset['year'] == year)]
 
-                    y_lines = output_dataset.loc[(output_dataset['Organisation'] == organisation)
-                                                  & (output_dataset['Scenario'] == scenario)
+                    y_lines = output_dataset.loc[(output_dataset['organisation'] == organisation)
+                                                  & (output_dataset['scenario'] == scenario)
                                                   & (output_dataset['year'] == year)]
 
                     if x_lines.shape[0] == 1 and y_lines.shape[0] == 0:
-                        row = {'Organisation': organisation, 'Scenario': scenario, 'year': year}
+                        row = {'organisation': organisation, 'scenario': scenario, 'year': year}
                         output_dataset = output_dataset.append(row, ignore_index=True)
                         # print('{} - {} - {}'.format(organisation, scenario, year))
 
                     if x_lines.shape[0] == 0 and y_lines.shape[0] == 1:
-                        row = {'Organisation': organisation, 'Scenario': scenario, 'year': year}
+                        row = {'organisation': organisation, 'scenario': scenario, 'year': year}
                         input_dataset = input_dataset.append(row, ignore_index=True)
                         # print('{} - {} - {}'.format(organisation, scenario, year))
 
@@ -321,97 +535,36 @@ class ModelProcessor:
         return dataset
 
     @staticmethod
-    def _get_scaler(model_name='', renew=False, do_not_create=False):
+    def _zipdir(path, ziph):
+        # ziph is zipfile handle
+        for root, dirs, files in os.walk(path):
+            c_dir = root
+            c_dir = 'tmp/' + c_dir[10:]
 
-        scaler_filename = "scaler.save"
+            for file in files:
+                ziph.write(os.path.join(root, file),
+                           os.path.relpath(os.path.join(c_dir, file),
+                                           os.path.join(path, '..')))
 
-        # if not os.path.exists("models"):
-        #     os.mkdir('models')
-        scaler = None
+    def _get_indicator_id(self, indicator, report_type):
 
-        if not renew:
-            if os.path.isfile(scaler_filename):
-                scaler = joblib.load(scaler_filename)
-            elif not do_not_create:
-                scaler = MinMaxScaler()
+        indicator_from_db = self._db_connector.read_indicator_from_name_type(indicator, report_type)
+
+        if not indicator_from_db:
+            indicator_id = 'ind_' + settings_controller.get_id()
+            self._db_connector.write_indicator(indicator_id, indicator, report_type)
         else:
-            scaler = MinMaxScaler()
+            indicator_id = indicator_from_db['indicator_id']
 
-        return scaler
+        return indicator_id
 
-    def _set_model(self, model_name='', renew=False, do_not_create=False):
 
-        folder_name = "model"
-        if renew or not self._model_is_set:
-            create = False
+def load_data(parameters):
 
-            if not renew:
-                if os.path.isdir(folder_name):
-                    self.model = self.model = keras.models.load_model(folder_name)
-                elif not do_not_create:
-                    create = True
-            else:
-                create = True
+    processor = ModelProcessor(parameters)
+    processor.load_data(parameters)
 
-            if create:
-                self.model = self._create_model(self.X.shape[1], self.y.shape[1])
-
-    def _save_model(self):
-
-        folder_name = "model"
-        self.model.save(folder_name)
-
-    @staticmethod
-    def _create_model(inputs_number, outputs_number):
-        model = Sequential()
-        model.add(Dense(600, activation="relu", input_shape=(inputs_number,), name='dense_1'))
-        model.add(Dense(400, activation="relu", name='dense_2'))
-        model.add(Dense(outputs_number, activation="linear", name='dense_4'))
-        return model
-
-    @staticmethod
-    def _make_x_y_list(x_list, y_list):
-        x_set = set(x_list)
-        y_set = set(y_list)
-        return list(x_set.union(y_set))
-
-    @staticmethod
-    def _get_year(date_str):
-        return int(date_str.split('.')[2])
-
-    @staticmethod
-    def _get_month(date_str):
-        return int(date_str.split('.')[1])
-
-    def _make_graph(self, x, y, x_label, y_label):
-
-        fig, ax = plt.subplots()
-
-        ax.plot(x, y)# , label='y_test')
-
-        ax.set_xlabel(x_label)
-        ax.set_ylabel(y_label)
-        # ax.legend()
-
-        # plt.show()
-        fig.savefig(self.graph_file_name)
-
-    def read_graph_file(self):
-
-        f = open(self.graph_file_name, 'rb')
-        result = f.read()
-        f.close()
-
-        return result
-
-    @staticmethod
-    def _get_dataframe_for_graph(x, x_indicator):
-        columns = [x_indicator + '_' + str(number) for number in range(1, 13)]
-        result = x[columns]
-        result = result.sum(axis=1)
-
-        result = result/12
-        return np.array(result)
+    return {'status': 'OK', 'error_text': '', 'description': 'model data loaded'}
 
 
 @JobProcessor.job_processing
@@ -421,39 +574,19 @@ def fit(parameters):
     return {'status': 'OK', 'error_text': '', 'description': 'model fitted', 'history': history}
 
 
-def load_data(parameters):
-    inputs = parameters.get('inputs')
-    outputs = parameters.get('outputs')
-    if not inputs:
-        raise ProcessorException('inputs not found in parameters')
-    if not outputs:
-        raise ProcessorException('outputs not found in parameters')
-
-    processor = ModelProcessor(parameters)
-    processor.write_data(inputs, outputs)
-    if parameters.get('prepare'):
-        processor.prepare_data()
-    return {'status': 'OK', 'error_text': '', 'description': 'model data loaded'}
-
-
-def prepare_data(parameters):
-    processor = ModelProcessor(parameters)
-    processor.prepare_data()
-    return {'status': 'OK', 'error_text': '', 'description': 'model data prepared'}
-
-
 def predict(parameters):
-    inputs = parameters.get('inputs')
-    if not inputs:
-        raise ProcessorException('inputs not found in parameters')
 
-    get_graph = parameters.get('get_graph')
-    graph_data = parameters.get('graph_data')
     processor = ModelProcessor(parameters)
-    prediction, graph_bin = processor.predict(inputs, get_graph=get_graph, graph_data=graph_data)
+    prediction, y_columns, graph_bin = processor.predict(parameters)
 
     result = dict(status='OK', error_text='', result=prediction, description='model data loaded')
 
     if graph_bin:
         result['graph_data'] = base64.b64encode(graph_bin).decode(encoding='utf-8')
     return result
+
+
+def set_db_connector(parameters):
+    global DB_CONNECTOR
+    if not DB_CONNECTOR:
+        DB_CONNECTOR = db_connector.Connector(parameters, initialize=True)

@@ -6,3 +6,4 @@ job_logs/*
 model/*
 models/*
 venv/*
+tmp/*

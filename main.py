@@ -41,18 +41,20 @@ if __name__ == '__main__':
 
     request_dict = dict()
     request_dict[1] = 'model_load_data'
-    request_dict[2] = 'model_fit'
-    request_dict[3] = 'model_predict'
-    request_dict[4] = 'job_get_state'
-    request_dict[5] = 'job_delete'
+    request_dict[2] = 'model_prepare_data'
+    request_dict[3] = 'model_fit'
+    request_dict[4] = 'model_predict'
+    request_dict[5] = 'job_get_state'
+    request_dict[6] = 'job_delete'
 
     print('Input number to choose action:')
     for key, value in request_dict.items():
         print(str(key) + ' - "' + value + '"')
 
     print('')
-
-    request_number = int(input('>> '))
+    request_number = 0
+    # request_number = int(input('>> '))
+    request_number = 6
 
     if request_number != 0:
 

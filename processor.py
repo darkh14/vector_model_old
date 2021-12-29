@@ -105,7 +105,6 @@ class Processor:
     def _requests_methods():
         result = dict()
         result['model_load_data'] = model_processor.load_data
-        result['model_prepare_data'] = model_processor.prepare_data
         result['model_fit'] = model_processor.fit
         result['model_predict'] = model_processor.predict
         result['job_get_state'] = job_processor.job_get_state
@@ -127,23 +126,25 @@ class Processor:
 def process(environ, start_response):
 
     processor = Processor()
-    try:
-        output = processor.process(environ, start_response)
-    except ProcessorException as e:
-        output = dict()
-        output['status'] = 'error'
-        output['error_text'] = str(e)
-        output = processor.transform_output_parameters_to_str(output, start_response=start_response)
-    except Exception as e:
-        output = dict()
-        output['status'] = 'error'
-        output['error_text'] = traceback.format_exc()
-        output = processor.transform_output_parameters_to_str(output, start_response=start_response)
-
+    # try:
+    #     output = processor.process(environ, start_response)
+    # except ProcessorException as e:
+    #     output = dict()
+    #     output['status'] = 'error'
+    #     output['error_text'] = str(e)
+    #     output = processor.transform_output_parameters_to_str(output, start_response=start_response)
+    # except Exception as e:
+    #     output = dict()
+    #     output['status'] = 'error'
+    #     output['error_text'] = traceback.format_exc()
+    #     output = processor.transform_output_parameters_to_str(output, start_response=start_response)
+    output = processor.process(environ, start_response)
     return output
+
 
 def start_response():
     pass
+
 
 def process_with_parameters(parameters):
 
