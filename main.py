@@ -40,6 +40,7 @@ def t_start_response(status, headers):
 if __name__ == '__main__':
 
     request_dict = dict()
+
     request_dict[1] = 'model_load_data'
     request_dict[2] = 'model_prepare_data'
     request_dict[3] = 'model_fit'
