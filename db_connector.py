@@ -3,6 +3,8 @@ from logger import ProcessorException as ProcessorException
 import settings_controller
 import numpy as np
 
+from datetime import datetime
+
 
 class Connector:
 
@@ -33,19 +35,73 @@ class Connector:
         if initialize:
             self.initialize()
 
-    def write_model_data(self, inputs, outputs, model_name='', rewrite=False):
+    def write_raw_data(self, raw_data, model_name='', overwrite=False):
+        collection = self.get_collection('raw_data')
 
-        self._write_data(inputs, 'inputs', rewrite)
-        self._write_data(outputs, 'outputs', rewrite)
+        for line in raw_data:
+            line['loading_date'] = datetime.now()
 
-    def write_model_pd_data(self, inputs, outputs, model_name='', rewrite=False):
-        self._write_data(inputs.to_dict('records'), 'pd_inputs', rewrite)
-        self._write_data(outputs.to_dict('records'), 'pd_outputs', rewrite)
+        if overwrite:
+            collection.drop()
+            collection.insert_many(raw_data)
+        else:
+            selections = ['version', 'period', 'scenario', 'organisation', 'report_type', 'indicator']
+            for line in raw_data:
+                line_filter = {selection: line[selection] for selection in selections}
+                db_line = self._read_line('raw_data', line_filter)
 
-    def write_x_y(self, X, y, model_name='', rewrite=False):
+                if not db_line or line['value'] == db_line['value']:
+                    collection.replace_one(line_filter, line, upsert=True)
 
-        self._write_data(self._numpy_to_list_of_dicts(X), 'X', rewrite)
-        self._write_data(self._numpy_to_list_of_dicts(y), 'y', rewrite)
+    def read_indicator_from_id(self, indicator_id):
+        result = self._read_line('indicators', {'indicator_id': indicator_id})
+        if result:
+            result.pop('_id')
+
+        return result
+
+    def read_indicator_from_name_type(self, indicator, report_type):
+        result = self._read_line('indicators', {'indicator': indicator, 'report_type': report_type})
+        if result:
+            result.pop('_id')
+
+        return result
+
+    def write_indicator(self, indicator_id, indicator, report_type):
+        line = {'indicator_id': indicator_id, 'indicator': indicator, 'report_type': report_type}
+        self._write_line('indicators', line, selections=['indicator_id'])
+
+    def read_model_description(self, model_id):
+        return self._read_line('models', {'model_id': model_id})
+
+    def write_model_description(self, model_description):
+        self._write_line('models', model_description, ['model_id'])
+
+    def write_model_columns(self, model_id, x_columns, y_columns):
+        model_description = self.read_model_description(model_id)
+        model_description['x_columns'] = x_columns
+        model_description['y_columns'] = y_columns
+
+        self.write_model_description(model_description)
+
+    def write_model_scaler(self, model_id, scaler):
+        model_description = self.read_model_description(model_id)
+        model_description['scaler'] = scaler
+
+        self.write_model_description(model_description)
+
+    def write_inner_model(self, model_id, inner_model):
+        model_description = self.read_model_description(model_id)
+        model_description['inner_model'] = inner_model
+
+        self.write_model_description(model_description)
+
+    def read_data_with_indicators_filter(self, indicators, date_from):
+        collection = self.get_collection('raw_data')
+        db_filter = {'indicator_id': {'$in': indicators}}
+        if date_from:
+            db_filter['loading_date'] = {'$gte': date_from}
+        return list(collection.find(db_filter))
 
     def write_job(self, job_line):
         self._write_line('background_jobs', job_line, ['job_id'])
@@ -72,32 +128,29 @@ class Connector:
         lines = self.read_jobs(job_filter, limit=1)
         return lines[0] if lines else None
 
-    def read_x_y(self, model_name=''):
-
-        X = self._read_data('X')
-        y = self._read_data('y')
-
-        X = np.array([list(line.values())[1:] for line in X])
-        y = np.array([list(line.values())[1:] for line in y])
-
-        return X, y
-
-    def read_model_data(self, model_name=''):
-
-        return self._read_data('inputs'), self._read_data('outputs')
-
-    def write_additional_model_data(self, data, model_name='', rewrite=False):
-        for data_name, data_list in data.items():
-            self._write_data([{'value': data_element}for data_element in data_list], data_name, rewrite, ['value'])
-
-    def read_additional_data(self, names, model_name=''):
-        values = [[item['value'] for item in self._read_data(name)] for name in names]
-        return dict(zip(names, values))
+    def delete_jobs(self, del_filter):
+        self._delete_lines('background_jobs', del_filter)
 
     def initialize(self):
         self._connect()
         self._set_db()
         self._set_collections()
+
+    def get_collection(self, collection_name):
+
+        if not self._initialized:
+            raise ProcessorException('connector is not initialized')
+
+        collection = self._collections.get(collection_name)
+
+        if not collection:
+            collection = self._db.get_collection(collection_name)
+            self._collections[collection_name] = collection
+
+        if not collection:
+            raise ProcessorException('collection {} not found in db {}'.format(collection_name, self.db_name))
+
+        return collection
 
     def _connect(self, **kwargs):
 
@@ -159,32 +212,21 @@ class Connector:
         collection = self.get_collection(collection_name)
 
         if rewrite:
-            collection.delete_many({})
+            collection.drop()
             collection.insert_many(data)
         else:
             for line in data:
                 self._write_line(collection_name, line, selections)
 
+    def _read_line(self, collection_name, line_filter):
+
+        collection = self.get_collection(collection_name)
+        return collection.find_one(line_filter)
+
     def _read_data(self, collection_name):
 
         collection = self.get_collection(collection_name)
         return list(collection.find())
-
-    def get_collection(self, collection_name):
-
-        if not self._initialized:
-            raise ProcessorException('connector is not initialized')
-
-        collection = self._collections.get(collection_name)
-
-        if not collection:
-            collection = self._db.get_collection(collection_name)
-            self._collections[collection_name] = collection
-
-        if not collection:
-            raise ProcessorException('collection {} not found in db {}'.format(collection_name, self.db_name))
-
-        return collection
 
     def _get_collection_names(self):
 
@@ -192,9 +234,6 @@ class Connector:
             raise ProcessorException('db must be selected to get collection names')
 
         return self._db.list_collection_names()
-
-    def delete_jobs(self, del_filter):
-        self._delete_lines('background_jobs', del_filter)
 
     def _delete_lines(self, collection_name, del_filter):
 
