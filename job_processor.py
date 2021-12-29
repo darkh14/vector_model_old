@@ -91,17 +91,22 @@ class JobProcessor:
         db_connector = cls.get_db_connector(parameters)
         job_lines = db_connector.read_jobs(job_filter)
 
-        if not job_lines:
-            job_lines = list()
-        else:
+        job_lines_result = list()
+        if job_lines:
+
             for job_line in job_lines:
 
-                if job_line.get('start_date'):
-                    job_line['start_date'] = job_line['start_date'].strftime('%d.%m.%Y %H:%M:%S')
-                if job_line.get('finish_date'):
-                    job_line['finish_date'] = job_line['finish_date'].strftime('%d.%m.%Y %H:%M:%S')
+                job_line_result = job_line.copy()
+
+                if job_line_result.get('start_date'):
+                    job_line_result['start_date'] = job_line_result['start_date'].strftime('%d.%m.%Y %H:%M:%S')
+                if job_line_result.get('finish_date'):
+                    job_line_result['finish_date'] = job_line_result['finish_date'].strftime('%d.%m.%Y %H:%M:%S')
+
+                job_lines_result.append(job_line_result)
 
                 if job_line['status'] in ['created', 'started']:
+
                     logger = StdOutErrLogger(job_line['job_id'], db_connector=db_connector)
                     out, err = logger.read_logs()
 
@@ -113,7 +118,7 @@ class JobProcessor:
         return {'status': 'OK',
                 'error_text': '',
                 'description': 'jobs status received',
-                'jobs': job_lines}
+                'jobs': job_lines_result}
 
     @classmethod
     def get_job_state(cls, job_id, parameters):
