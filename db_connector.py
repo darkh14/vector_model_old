@@ -36,22 +36,33 @@ class Connector:
             self.initialize()
 
     def write_raw_data(self, raw_data, model_name='', overwrite=False):
+        print('---Loading raw data started---')
         collection = self.get_collection('raw_data')
 
         for line in raw_data:
             line['loading_date'] = datetime.now()
 
         if overwrite:
+            print('---Removing old data---')
             collection.drop()
+            print('---Removing old data - finished --')
+            print('---Inserting new data---')
             collection.insert_many(raw_data)
+            print('---Inserting new data - finished--')
         else:
+            print('---Updating data--')
             selections = ['version', 'period', 'scenario', 'organisation', 'report_type', 'indicator']
+            line_num = 1
             for line in raw_data:
                 line_filter = {selection: line[selection] for selection in selections}
-                db_line = self._read_line('raw_data', line_filter)
+                collection.update_one(line_filter, {'$set': line}, upsert=True)
+                if line_num % 100 == 0:
+                    print('\r------Updated {} lines'.format(line_num), end='')
+                line_num +=1
+            print()
+            print('---Updating data - finished--')
 
-                if not db_line or line['value'] == db_line['value']:
-                    collection.replace_one(line_filter, line, upsert=True)
+        print('---Loading raw data started---')
 
     def read_indicator_from_id(self, indicator_id):
         result = self._read_line('indicators', {'indicator_id': indicator_id})

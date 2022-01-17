@@ -103,6 +103,8 @@ class JobProcessor:
                 if job_line_result.get('finish_date'):
                     job_line_result['finish_date'] = job_line_result['finish_date'].strftime('%d.%m.%Y %H:%M:%S')
 
+                if job_line_result.get('parameters'):
+                    job_line_result.pop('parameters')
                 job_lines_result.append(job_line_result)
 
                 if job_line['status'] in ['created', 'started']:
@@ -229,7 +231,7 @@ def execute_method(system_parameters):
         print(imported_function)
         function_parameters = job_line['parameters'].copy()
         function_parameters['background_job'] = False
-        print(function_parameters)
+
         result = imported_function(function_parameters)
 
         logger = StdOutErrLogger(job_id)
