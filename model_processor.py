@@ -695,6 +695,7 @@ def predict(parameters):
     return result
 
 
+@JobProcessor.job_processing
 def calculate_feature_importances(parameters):
 
     processor = ModelProcessor(parameters)

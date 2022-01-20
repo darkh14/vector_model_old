@@ -117,7 +117,7 @@ class Connector:
         collection = self.get_collection('raw_data')
         db_filter = {'indicator_id': {'$in': indicators}}
         if date_from:
-            db_filter['loading_date'] = {'$gte': date_from}
+            db_filter['loading_date'] = {'$gte': datetime.strptime(date_from, '%d.%m.%Y')}
 
         return list(collection.find(db_filter))
 

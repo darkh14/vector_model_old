@@ -7,4 +7,4 @@ model/*
 models/*
 venv/*
 tmp/*
-tmp/*
+parameters_json/*
