@@ -95,6 +95,12 @@ class Connector:
 
         self.write_model_description(model_description)
 
+    def write_model_fi(self, model_id, fi):
+        model_description = self.read_model_description(model_id)
+        model_description['feature_importances'] = fi
+
+        self.write_model_description(model_description)
+
     def write_model_scaler(self, model_id, scaler):
         model_description = self.read_model_description(model_id)
         model_description['scaler'] = scaler
@@ -107,11 +113,12 @@ class Connector:
 
         self.write_model_description(model_description)
 
-    def read_data_with_indicators_filter(self, indicators, date_from):
+    def read_raw_data(self, indicators, date_from):
         collection = self.get_collection('raw_data')
         db_filter = {'indicator_id': {'$in': indicators}}
         if date_from:
             db_filter['loading_date'] = {'$gte': date_from}
+
         return list(collection.find(db_filter))
 
     def write_job(self, job_line):

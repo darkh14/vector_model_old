@@ -45,6 +45,8 @@ if __name__ == '__main__':
     request_dict[3] = 'model_predict'
     request_dict[4] = 'job_get_state'
     request_dict[5] = 'job_delete'
+    request_dict[6] = 'model_calculate_feature_importances'
+    request_dict[7] = 'model_get_feature_importances'
 
     print('Input number to choose action:')
     for key, value in request_dict.items():
