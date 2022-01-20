@@ -5,6 +5,7 @@ import numpy as np
 
 import pandas as pd
 import os
+import math
 
 from job_processor import JobProcessor
 
@@ -265,7 +266,10 @@ class Model:
         if get_graph:
 
             x_graph, y_graph = self._get_dataframe_for_graph(data, graph_data['x_indicator'], graph_data['y_indicator'])
-            self._make_graph(x_graph, y_graph, graph_data['x_indicator'], graph_data['y_indicator'])
+
+            x_label = graph_data['x_indicator']['report_type'] + '\n' + graph_data['x_indicator']['indicator']
+            y_label = graph_data['y_indicator']['report_type'] + '\n' + graph_data['y_indicator']['indicator']
+            self._make_graph(x_graph, y_graph, x_label, y_label)
 
             graph_bin = self.read_graph_file()
 
@@ -352,13 +356,30 @@ class Model:
 
     def _make_graph(self, x, y, x_label, y_label):
 
+        x_max = max(x.max(), -(x.min()))
+        x_mul = math.floor(math.log10(x_max))
+        x_mul = math.floor(x_mul/3)*3
+        x_mul = max(x_mul, 0)
+
+        x = x*10**(-x_mul)
+
+        y_max = max(y.max(), -(y.min()))
+        y_mul = math.floor(math.log10(y_max))
+        y_mul = math.floor(y_mul/3)*3
+        y_mul = max(y_mul, 0)
+
+        y = y*10**(-y_mul)
+
         fig, ax = plt.subplots()
 
         ax.plot(x, y) # , label='y_test')
 
-        ax.set_xlabel(x_label)
-        ax.set_ylabel(y_label)
+        ax.set_xlabel(x_label + '\n' + '\\ {}'.format(10**x_mul))
+        ax.set_ylabel(y_label + '\n' + '\\ {}'.format(10**y_mul))
         # ax.legend()
+
+        fig.set_figwidth(8)  # ширина и
+        fig.set_figheight(8)  # высота "Figure"
 
         # plt.show()
         fig.savefig(self.graph_file_name)
