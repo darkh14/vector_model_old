@@ -106,7 +106,8 @@ class ModelProcessor:
 
         self.model = Model(model_description['id'])
 
-        result = self.model.calculate_feature_importances(date_from=parameters.get('date_from'))
+        result = self.model.calculate_feature_importances(date_from=parameters.get('date_from'),
+                                                          epochs=parameters.get('epochs'))
 
         return result
 
@@ -160,6 +161,9 @@ class Model:
 
         self._inner_model = None
         self._epochs = 0
+        self._validation_split = 0.2
+        self._retrofit = False
+        self._temp_input = None
 
         self.need_to_update = not description_from_db or need_to_update
         self.graph_file_name = 'graph.png'
@@ -195,8 +199,6 @@ class Model:
         if retrofit and self.need_to_update:
             raise ProcessorException('Model can not be updated when retrofit')
 
-        self._epochs = epochs or 100
-
         self.update_model(data)
 
         additional_data = {'x_indicators': self.x_indicators,
@@ -222,18 +224,21 @@ class Model:
             normalizer = inner_model.layers[0]
             normalizer.adapt(x)
 
-        inner_model.compile(optimizer=optimizers.Adam(learning_rate=0.1), loss='MeanSquaredError',
-                            metrics=['RootMeanSquaredError'])
-
-        validation_split = validation_split or 0.2
-
-        history = inner_model.fit(x, y, epochs=self._epochs, verbose=2, validation_split=validation_split)
-
-        # self._data_processor.write_scaler(self.model_id, scaler)
-        self._data_processor.write_inner_model(self.model_id, inner_model)
+        self._inner_model = inner_model
+        self._epochs = epochs or 1000
+        self._validation_split = validation_split or 0.2
 
         if calculate_fi:
-            self.calculate_feature_importances(x, y, x_columns, date_from)
+            fi_model = KerasRegressor(build_fn=self._get_model_for_feature_importances, epochs=3000, verbose=2)
+            history = fi_model.fit(x, y)
+            self._calculate_fi_from_model(fi_model, x, y, x_columns)
+        else:
+            inner_model.compile(optimizer=optimizers.Adam(learning_rate=0.1), loss='MeanSquaredError',
+                                metrics=['RootMeanSquaredError'])
+            history = inner_model.fit(x, y, epochs=self._epochs, verbose=2, validation_split=self._validation_split)
+
+        # self._data_processor.write_scaler(self.model_id, scaler)
+        self._data_processor.write_inner_model(self.model_id, self._inner_model)
 
         return history.history
 
@@ -283,22 +288,35 @@ class Model:
 
         return outputs.to_dict('records'), indicators_description, graph_bin
 
-    def calculate_feature_importances(self, x=None, y=None, x_columns=None, date_from=None):
+    def calculate_feature_importances(self, date_from=None, epochs=1000, retrofit=False, validation_split=0.2):
 
-        if not isinstance(x, np.ndarray) or not isinstance(y, np.ndarray):
-            data = self._data_processor.read_raw_data(self.x_indicators + self.y_indicators, date_from)
-            additional_data = {'x_indicators': self.x_indicators,
-                               'y_indicators': self.y_indicators,
-                               'periods': self.periods,
-                               'organisations': self.organisations,
-                               'scenarios': self.scenarios,
-                               'x_columns': self.x_columns,
-                               'y_columns': self.y_columns}
-            x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data)
+        data = self._data_processor.read_raw_data(self.x_indicators + self.y_indicators, date_from)
+        additional_data = {'x_indicators': self.x_indicators,
+                           'y_indicators': self.y_indicators,
+                           'periods': self.periods,
+                           'organisations': self.organisations,
+                           'scenarios': self.scenarios,
+                           'x_columns': self.x_columns,
+                           'y_columns': self.y_columns}
+        x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data)
 
-        fi_model = KerasRegressor(build_fn=self._get_model_for_feature_importances, nb_epoch=1000, verbose=2)
+        self._temp_input = x
+        self._inner_model = self._get_inner_model(len(self.x_columns), len(self.y_columns), retrofit=retrofit)
+
+        epochs = epochs or 1000
+        validation_split = validation_split or 0.2
+
+        fi_model = KerasRegressor(build_fn=self._get_model_for_feature_importances,
+                                  epochs=epochs,
+                                  verbose=2,
+                                  validation_split=validation_split)
         fi_model.fit(x, y)
 
+        fi = self._calculate_fi_from_model(fi_model, x, y, x_columns)
+
+        return fi
+
+    def _calculate_fi_from_model(self, fi_model, x, y, x_columns):
         perm = PermutationImportance(fi_model, random_state=42).fit(x, y)
 
         fi = pd.DataFrame(perm.feature_importances_, columns=['feature_importance'])
@@ -311,6 +329,7 @@ class Model:
         self._data_processor.write_feature_importances(self.model_id, fi)
 
         return fi
+
 
     def get_feature_importances(self):
         fi = self._data_processor.read_feature_importances(self.model_id)
@@ -344,10 +363,10 @@ class Model:
         return inner_model
 
     def _get_model_for_feature_importances(self):
-        model_copy = self._create_inner_model(len(self.x_columns), len(self.y_columns))
-        model_copy.compile(optimizer=optimizers.Adam(learning_rate=0.1), loss='MeanSquaredError',
-                           metrics=['RootMeanSquaredError'])
-        return model_copy
+        self._inner_model.layers[0].adapt(self._temp_input)
+        self._inner_model.compile(optimizer=optimizers.Adam(learning_rate=0.1), loss='MeanSquaredError',
+                                  metrics=['RootMeanSquaredError'])
+        return self._inner_model
 
     @staticmethod
     def _create_inner_model(inputs_number, outputs_number):
