@@ -91,9 +91,11 @@ class ModelProcessor:
         get_graph = parameters.get('get_graph')
         graph_data = parameters.get('graph_data')
 
-        prediction, y_columns, graph_bin = self.model.predict(inputs, get_graph=get_graph, graph_data=graph_data)
+        prediction, indicator_description, graph_bin = self.model.predict(inputs,
+                                                                          get_graph=get_graph,
+                                                                          graph_data=graph_data)
 
-        return prediction, y_columns, graph_bin
+        return prediction, indicator_description, graph_bin
 
     def calculate_feature_importances(self, parameters):
 
@@ -275,7 +277,12 @@ class Model:
 
         outputs = data.drop(self.x_columns, axis=1)
 
-        return outputs.to_dict('records'), self.y_columns, graph_bin
+        indicators_description = [{'indicator_id': x_ind,
+                                   'indicator': self._data_processor.get_indicator_name(x_ind),
+                                   'report_type': self._data_processor.get_indicator_report_type(x_ind)}
+                                  for x_ind in self.x_indicators + self.y_indicators]
+
+        return outputs.to_dict('records'), indicators_description, graph_bin
 
     def calculate_feature_importances(self, x=None, y=None, x_columns=None, date_from=None):
 
@@ -707,9 +714,13 @@ def fit(parameters):
 def predict(parameters):
 
     processor = ModelProcessor(parameters)
-    prediction, y_columns, graph_bin = processor.predict(parameters)
+    prediction, indicator_description, graph_bin = processor.predict(parameters)
 
-    result = dict(status='OK', error_text='', result=prediction, description='model predicted')
+    result = dict(status='OK',
+                  error_text='',
+                  result=prediction,
+                  indicator_description=indicator_description,
+                  description='model predicted')
 
     if graph_bin:
         result['graph_data'] = base64.b64encode(graph_bin).decode(encoding='utf-8')
