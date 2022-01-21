@@ -220,19 +220,18 @@ class Model:
 
         inner_model = self._get_inner_model(x.shape[1], y.shape[1], retrofit=retrofit)
 
-        if isinstance(inner_model, keras.models.Sequential):
-            normalizer = inner_model.layers[0]
-            normalizer.adapt(x)
-
         self._inner_model = inner_model
         self._epochs = epochs or 1000
         self._validation_split = validation_split or 0.2
 
         if calculate_fi:
+            self._temp_input = x
             fi_model = KerasRegressor(build_fn=self._get_model_for_feature_importances, epochs=3000, verbose=2)
             history = fi_model.fit(x, y)
             self._calculate_fi_from_model(fi_model, x, y, x_columns)
         else:
+            normalizer = inner_model.layers[0]
+            normalizer.adapt(x)
             inner_model.compile(optimizer=optimizers.Adam(learning_rate=0.1), loss='MeanSquaredError',
                                 metrics=['RootMeanSquaredError'])
             history = inner_model.fit(x, y, epochs=self._epochs, verbose=2, validation_split=self._validation_split)
