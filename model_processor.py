@@ -277,10 +277,9 @@ class Model:
 
         outputs = data.drop(self.x_columns, axis=1)
 
-        indicators_description = [{'indicator_id': x_ind,
-                                   'indicator': self._data_processor.get_indicator_name(x_ind),
-                                   'report_type': self._data_processor.get_indicator_report_type(x_ind)}
-                                  for x_ind in self.x_indicators + self.y_indicators]
+        indicators_description = {x_ind: {'indicator': self._data_processor.get_indicator_name(x_ind),
+                                          'report_type': self._data_processor.get_indicator_report_type(x_ind)}
+                                  for x_ind in self.x_indicators + self.y_indicators}
 
         return outputs.to_dict('records'), indicators_description, graph_bin
 
