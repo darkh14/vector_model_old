@@ -65,13 +65,11 @@ class ModelProcessor:
                            need_to_update=need_to_update)
         retrofit = parameters.get('retrofit')
         date_from = parameters.get('date_from')
-        calculate_fi = parameters.get('calculate_fi')
 
         history = self.model.fit(parameters.get('epochs'),
                                  parameters.get('validation_split'),
                                  retrofit=retrofit,
-                                 date_from=date_from,
-                                 calculate_fi=calculate_fi)
+                                 date_from=date_from)
 
         return history
 
@@ -188,7 +186,7 @@ class Model:
             self._data_processor.write_model_to_db(model_description)
             self.need_to_update = False
 
-    def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None, calculate_fi=False):
+    def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
 
         if not retrofit:
             date_from = None
@@ -224,17 +222,13 @@ class Model:
         self._epochs = epochs or 1000
         self._validation_split = validation_split or 0.2
 
-        if calculate_fi:
-            self._temp_input = x
-            fi_model = KerasRegressor(build_fn=self._get_model_for_feature_importances, epochs=3000, verbose=2)
-            history = fi_model.fit(x, y)
-            self._calculate_fi_from_model(fi_model, x, y, x_columns)
-        else:
-            normalizer = inner_model.layers[0]
-            normalizer.adapt(x)
-            inner_model.compile(optimizer=optimizers.Adam(learning_rate=0.1), loss='MeanSquaredError',
-                                metrics=['RootMeanSquaredError'])
-            history = inner_model.fit(x, y, epochs=self._epochs, verbose=2, validation_split=self._validation_split)
+        normalizer = inner_model.layers[0]
+        normalizer.adapt(x)
+        inner_model.compile(optimizer=optimizers.Adam(learning_rate=0.1), loss='MeanSquaredError',
+                            metrics=['RootMeanSquaredError'])
+        history = inner_model.fit(x, y, epochs=self._epochs, verbose=2, validation_split=self._validation_split)
+
+        self._inner_model = inner_model
 
         # self._data_processor.write_scaler(self.model_id, scaler)
         self._data_processor.write_inner_model(self.model_id, self._inner_model)
@@ -329,7 +323,6 @@ class Model:
 
         return fi
 
-
     def get_feature_importances(self):
         fi = self._data_processor.read_feature_importances(self.model_id)
         if not fi:
@@ -362,10 +355,11 @@ class Model:
         return inner_model
 
     def _get_model_for_feature_importances(self):
-        self._inner_model.layers[0].adapt(self._temp_input)
-        self._inner_model.compile(optimizer=optimizers.Adam(learning_rate=0.1), loss='MeanSquaredError',
-                                  metrics=['RootMeanSquaredError'])
-        return self._inner_model
+        model_copy = clone_model(self._inner_model) # self._create_inner_model(len(self.x_columns), len(self.y_columns))
+        model_copy.layers[0].adapt(self._temp_input)
+        model_copy.compile(optimizer=optimizers.Adam(learning_rate=0.1), loss='MeanSquaredError',
+                           metrics=['RootMeanSquaredError'])
+        return model_copy
 
     @staticmethod
     def _create_inner_model(inputs_number, outputs_number):
