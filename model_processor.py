@@ -56,14 +56,14 @@ class ModelProcessor:
         if not model_description:
             raise ProcessorException('model is not in parameters')
 
-        need_to_update = bool(parameters.get('need_to_update'))
+        need_to_update = bool(model_description.get('need_to_update'))
 
         self.model = Model(model_description['id'],
                            model_description['name'],
                            model_description['x_indicators'],
                            model_description['y_indicators'],
                            need_to_update=need_to_update)
-        retrofit = parameters.get('retrofit')
+        retrofit = parameters.get('retrofit') and not need_to_update
         date_from = parameters.get('date_from')
 
         history = self.model.fit(parameters.get('epochs'),
@@ -141,6 +141,7 @@ class Model:
             self.scenarios = description_from_db['scenarios']
             self.x_columns = description_from_db['x_columns']
             self.y_columns = description_from_db['y_columns']
+            self.feature_importances = description_from_db.get('feature_importances')
         else:
             self.name = name
             self.x_indicators = []
@@ -150,6 +151,7 @@ class Model:
             self.scenarios = []
             self.x_columns = []
             self.y_columns = []
+            self.feature_importances = []
 
         if x_indicators:
             self.x_indicators = self._data_processor.get_indicator_ids(x_indicators)
@@ -181,7 +183,8 @@ class Model:
                                  'organisations': self.organisations,
                                  'scenarios': self.scenarios,
                                  'x_columns': self.x_columns,
-                                 'y_columns': self.y_columns}
+                                 'y_columns': self.y_columns,
+                                 'feature_importances': self.feature_importances}
 
             self._data_processor.write_model_to_db(model_description)
             self.need_to_update = False
@@ -213,8 +216,11 @@ class Model:
         if not retrofit:
             self._data_processor.write_columns(self.model_id, x_columns, y_columns)
 
-        # scaler = self._get_scaler(retrofit=retrofit)
-        # x = scaler.fit_transform(x)
+        # x_scaler = self._get_scaler(retrofit=retrofit)
+        # x_sc = x_scaler.fit_transform(x)
+        #
+        # y_scaler = self._get_scaler(retrofit=retrofit, is_out=True)
+        # y_sc = y_scaler.fit_transform(y)
 
         inner_model = self._get_inner_model(x.shape[1], y.shape[1], retrofit=retrofit)
 
@@ -224,13 +230,16 @@ class Model:
 
         normalizer = inner_model.layers[0]
         normalizer.adapt(x)
+
         inner_model.compile(optimizer=optimizers.Adam(learning_rate=0.1), loss='MeanSquaredError',
                             metrics=['RootMeanSquaredError'])
         history = inner_model.fit(x, y, epochs=self._epochs, verbose=2, validation_split=self._validation_split)
 
         self._inner_model = inner_model
 
-        # self._data_processor.write_scaler(self.model_id, scaler)
+        # self._data_processor.write_scaler(self.model_id, x_scaler)
+        # self._data_processor.write_scaler(self.model_id, y_scaler, is_out=True)
+
         self._data_processor.write_inner_model(self.model_id, self._inner_model)
 
         return history.history
@@ -248,16 +257,17 @@ class Model:
 
         x, x_pd, x_columns = self._data_processor.get_x_for_prediction(data, additional_data)
 
-        # scaler = self._get_scaler(True)
-        # x_sc = scaler.transform(x)
+        # x_scaler = self._get_scaler(True)
+        # x_sc = x_scaler.transform(x)
 
         inner_model = self._get_inner_model(retrofit=True)
 
-        if isinstance(inner_model, keras.models.Sequential):
-            normalizer = inner_model.layers[0]
-            normalizer.adapt(x)
+        normalizer = inner_model.layers[0]
+        normalizer.adapt(x)
 
         y = inner_model.predict(x)
+        # y_scaler = self._get_scaler(True, is_out=True)
+        # y = y_scaler.inverse_transform(y_sc)
 
         data = x_pd.copy()
         data[self.y_columns] = y
@@ -330,14 +340,14 @@ class Model:
 
         return fi
 
-    def _get_scaler(self, retrofit=False):
+    def _get_scaler(self, retrofit=False, is_out=False):
 
         if retrofit:
-            scaler = self._data_processor.read_scaler(self.model_id)
+            scaler = self._data_processor.read_scaler(self.model_id, is_out)
             if not scaler:
-                scaler = MinMaxScaler()
+                scaler = StandardScaler()
         else:
-            scaler = MinMaxScaler()
+            scaler = StandardScaler()
 
         return scaler
 
@@ -554,6 +564,7 @@ class DataProcessor:
 
         x = data.drop(['organisation', 'scenario', 'period', 'month', 'year'], axis=1)
         x_columns = list(x.columns)
+
         x = x.to_numpy()
 
         return x, data, x_columns
@@ -561,9 +572,9 @@ class DataProcessor:
     def write_columns(self, model_id, x_columns, y_columns):
         self._db_connector.write_model_columns(model_id, x_columns, y_columns)
 
-    def write_scaler(self, model_id, scaler):
+    def write_scaler(self, model_id, scaler, is_out=False):
         scaler_packed = pickle.dumps(scaler, protocol=pickle.HIGHEST_PROTOCOL)
-        self._db_connector.write_model_scaler(model_id, scaler_packed)
+        self._db_connector.write_model_scaler(model_id, scaler_packed, is_out)
 
     def write_feature_importances(self, model_id, feature_importances):
         self._db_connector.write_model_fi(model_id, feature_importances)
@@ -572,9 +583,10 @@ class DataProcessor:
         model_description = self.read_model_description_from_db(model_id)
         return model_description.get('feature_importances')
 
-    def read_scaler(self, model_id):
+    def read_scaler(self, model_id, is_out=False):
         model_description = self.read_model_description_from_db(model_id)
-        scaler_packed = model_description['scaler']
+        scaler_name = 'y_scaler' if is_out else 'x_scaler'
+        scaler_packed = model_description[scaler_name]
         return pickle.loads(scaler_packed)
 
     def write_inner_model(self, model_id, inner_model):
@@ -611,6 +623,14 @@ class DataProcessor:
         inner_model = keras.models.load_model('tmp/model')
 
         return inner_model
+
+    def write_model_field(self, model_id, field_name, value):
+        self._db_connector.write_model_field(model_id, field_name, value)
+
+    def read_model_field(self, model_id, field_name):
+        model_description = self.read_model_description_from_db(model_id)
+        value = model_description[field_name]
+        return value
 
     @staticmethod
     def _prepare_dataset_group(dataset):

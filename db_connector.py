@@ -101,15 +101,22 @@ class Connector:
 
         self.write_model_description(model_description)
 
-    def write_model_scaler(self, model_id, scaler):
+    def write_model_scaler(self, model_id, scaler, is_out=False):
+        scaler_name = 'y_scaler' if is_out else 'x_scaler'
         model_description = self.read_model_description(model_id)
-        model_description['scaler'] = scaler
+        model_description[scaler_name] = scaler
 
         self.write_model_description(model_description)
 
     def write_inner_model(self, model_id, inner_model):
         model_description = self.read_model_description(model_id)
         model_description['inner_model'] = inner_model
+
+        self.write_model_description(model_description)
+
+    def write_model_field(self, model_id, field_name, value):
+        model_description = self.read_model_description(model_id)
+        model_description[field_name] = value
 
         self.write_model_description(model_description)
 
