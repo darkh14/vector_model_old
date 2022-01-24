@@ -304,9 +304,9 @@ class BaseModel:
         # plt.show()
         fig.savefig(self.graph_file_name)
 
-    def _read_graph_file(self):
+    def _read_graph_file(self, fi_graph=False):
 
-        f = open(self.graph_file_name, 'rb')
+        f = open(self.graph_fi_file_name if fi_graph else self.graph_file_name, 'rb')
         result = f.read()
         f.close()
 
@@ -342,7 +342,7 @@ class BaseModel:
         indexes = list(range(1, len(values) + 1))
         self._make_fi_graph(values, indexes)
 
-        graph_bin = self._read_graph_file()
+        graph_bin = self._read_graph_file(fi_graph=True)
 
         return graph_bin
 
