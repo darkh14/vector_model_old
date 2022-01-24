@@ -6,10 +6,13 @@ import numpy as np
 import pandas as pd
 import os
 import math
+from abc import ABCMeta, abstractmethod
 
 from job_processor import JobProcessor
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
 from keras.wrappers.scikit_learn import KerasRegressor
 import eli5
 from eli5.sklearn import PermutationImportance
@@ -58,16 +61,13 @@ class ModelProcessor:
 
         need_to_update = bool(model_description.get('need_to_update'))
 
-        self.model = Model(model_description['id'],
-                           model_description['name'],
-                           model_description['x_indicators'],
-                           model_description['y_indicators'],
-                           need_to_update=need_to_update)
+        self.model = self._get_model(model_description)
+
         retrofit = parameters.get('retrofit') and not need_to_update
         date_from = parameters.get('date_from')
 
-        history = self.model.fit(parameters.get('epochs'),
-                                 parameters.get('validation_split'),
+        history = self.model.fit(epochs=parameters.get('epochs'),
+                                 validation_split=parameters.get('validation_split'),
                                  retrofit=retrofit,
                                  date_from=date_from)
 
@@ -80,7 +80,7 @@ class ModelProcessor:
         if not model_description:
             raise ProcessorException('model is not in parameters')
 
-        self.model = Model(model_description['id'])
+        self.model = self._get_model(model_description)
 
         inputs = parameters.get('inputs')
         if not inputs:
@@ -102,7 +102,7 @@ class ModelProcessor:
         if not model_description:
             raise ProcessorException('model is not in parameters')
 
-        self.model = Model(model_description['id'])
+        self.model = self._get_model(model_description)
 
         result = self.model.calculate_feature_importances(date_from=parameters.get('date_from'),
                                                           epochs=parameters.get('epochs'))
@@ -116,14 +116,43 @@ class ModelProcessor:
         if not model_description:
             raise ProcessorException('model is not in parameters')
 
-        self.model = Model(model_description['id'])
+        self.model = self._get_model(model_description)
 
-        result = self.model.get_feature_importances()
+        result, graph_bin = self.model.get_feature_importances(parameters.get('get_graph'))
 
-        return result
+        return result, graph_bin
+
+    @staticmethod
+    def _get_model(model_description):
+
+        need_to_update = bool(model_description.get('need_to_update'))
+
+        model_type = model_description.get('type')
+        if not model_type:
+            raise ProcessorException('model type not in model description')
+
+        model_class = None
+        if model_type == 'neural_network':
+            model_class = NeuralNetworkModel
+        elif model_type == 'linear_regression':
+            model_class = LinerModel
+
+        if not model_class:
+            raise ProcessorException('model type "{}" is not supported'.format(model_type))
+
+        model = model_class(model_description['id'],
+                            model_description['name'],
+                            model_description['x_indicators'],
+                            model_description['y_indicators'],
+                            need_to_update=need_to_update)
+
+        return model
 
 
-class Model:
+class BaseModel:
+
+    __metaclass__ = ABCMeta
+    type = ''
 
     def __init__(self, model_id, name='', x_indicators=None, y_indicators=None, need_to_update=False):
         self.model_id = model_id
@@ -160,13 +189,11 @@ class Model:
             self.y_indicators = self._data_processor.get_indicator_ids(y_indicators)
 
         self._inner_model = None
-        self._epochs = 0
-        self._validation_split = 0.2
         self._retrofit = False
-        self._temp_input = None
 
         self.need_to_update = not description_from_db or need_to_update
         self.graph_file_name = 'graph.png'
+        self.graph_fi_file_name = 'fi_graph.png'
 
     def update_model(self, data):
         if self.need_to_update:
@@ -189,6 +216,161 @@ class Model:
             self._data_processor.write_model_to_db(model_description)
             self.need_to_update = False
 
+    @abstractmethod
+    def fit(self, retrofit=False, date_from=None):
+        """method for fitting model"""
+
+    @abstractmethod
+    def predict(self, inputs, get_graph=False, graph_data=None):
+        """method for predicting data from model"""
+
+    @abstractmethod
+    def calculate_feature_importances(self, date_from=None, epochs=1000, retrofit=False, validation_split=0.2):
+        """method for calculating feature importances"""
+
+    def _calculate_fi_from_model(self, fi_model, x, y, x_columns):
+        perm = PermutationImportance(fi_model, random_state=42).fit(x, y)
+
+        fi = pd.DataFrame(perm.feature_importances_, columns=['feature_importance'])
+        fi['feature'] = x_columns
+        fi = fi.sort_values(by='feature_importance', ascending=False)
+        fi['indicator'] = fi['feature'].apply(self._data_processor.get_indicator_name)
+        fi['report_type'] = fi['feature'].apply(self._data_processor.get_indicator_report_type)
+
+        fi = fi.to_dict('records')
+        self._data_processor.write_feature_importances(self.model_id, fi)
+
+        return fi
+
+    def get_feature_importances(self, get_graph=False):
+        fi = self._data_processor.read_feature_importances(self.model_id)
+        if not fi:
+            raise ProcessorException('Feature importances is not calculates')
+        graph_bin = None
+        if get_graph:
+            graph_bin = self._get_fi_graph_bin(fi)
+
+        return fi, graph_bin
+
+    def _get_scaler(self, retrofit=False, is_out=False):
+
+        if retrofit:
+            scaler = self._data_processor.read_scaler(self.model_id, is_out)
+            if not scaler:
+                scaler = StandardScaler()
+        else:
+            scaler = StandardScaler()
+
+        return scaler
+
+    def _get_graph_bin(self, data, graph_data):
+        x_graph, y_graph = self._get_dataframe_for_graph(data, graph_data['x_indicator'], graph_data['y_indicator'])
+
+        x_label = graph_data['x_indicator']['report_type'] + '\n' + graph_data['x_indicator']['indicator']
+        y_label = graph_data['y_indicator']['report_type'] + '\n' + graph_data['y_indicator']['indicator']
+        self._make_graph(x_graph, y_graph, x_label, y_label)
+
+        graph_bin = self._read_graph_file()
+
+        return graph_bin
+
+    def _make_graph(self, x, y, x_label, y_label):
+
+        x_max = max(x.max(), -(x.min()))
+        x_mul = math.floor(math.log10(x_max))
+        x_mul = math.floor(x_mul/3)*3
+        x_mul = max(x_mul, 0)
+
+        x = x*10**(-x_mul)
+
+        y_max = max(y.max(), -(y.min()))
+        y_mul = math.floor(math.log10(y_max))
+        y_mul = math.floor(y_mul/3)*3
+        y_mul = max(y_mul, 0)
+
+        y = y*10**(-y_mul)
+
+        fig, ax = plt.subplots()
+
+        ax.plot(x, y) # , label='y_test')
+
+        ax.set_xlabel(x_label + '\n' + '\\ {}'.format(10**x_mul))
+        ax.set_ylabel(y_label + '\n' + '\\ {}'.format(10**y_mul))
+        # ax.legend()
+
+        fig.set_figwidth(8)  # ширина и
+        fig.set_figheight(8)  # высота "Figure"
+
+        # plt.show()
+        fig.savefig(self.graph_file_name)
+
+    def _read_graph_file(self):
+
+        f = open(self.graph_file_name, 'rb')
+        result = f.read()
+        f.close()
+
+        return result
+
+    def _get_dataframe_for_graph(self, data, x_indicator, y_indicator):
+
+        x_indicator_descr = self._data_processor.get_indicator_from_name_type(x_indicator['indicator'],
+                                                                              x_indicator['report_type'])
+        x_column = x_indicator_descr['indicator_id'] + '_value'
+
+        y_indicator_descr = self._data_processor.get_indicator_from_name_type(y_indicator['indicator'],
+                                                                              y_indicator['report_type'])
+        y_column = y_indicator_descr['indicator_id'] + '_value'
+
+        data = data[[x_column, y_column]]
+
+        data = data.sort_values(by=[x_column])
+        data_sum = data.groupby([x_column]).sum()
+        data_sum = data_sum.reset_index()
+        data_count = data.groupby([x_column]).count()
+        data_count = data_count.reset_index()
+
+        data_sum[y_column] = data_sum[y_column]/data_count[y_column]
+
+        data = data_sum
+
+        return np.array(data[x_column]), np.array(data[y_column])
+
+    def _get_fi_graph_bin(self, fi):
+
+        values = [line['feature_importance']for line in fi]
+        indexes = list(range(1, len(values) + 1))
+        self._make_fi_graph(values, indexes)
+
+        graph_bin = self._read_graph_file()
+
+        return graph_bin
+
+    def _make_fi_graph(self, values, indexes):
+
+        fig, ax = plt.subplots()
+
+        ax.bar(indexes, values) # , label='y_test')
+
+        fig.set_figwidth(8)  # ширина и
+        fig.set_figheight(8)  # высота "Figure"
+
+        # plt.show()
+        fig.savefig(self.graph_fi_file_name)
+
+
+class NeuralNetworkModel(BaseModel):
+
+    type = 'neural_network'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self._epochs = 0
+        self._validation_split = 0.2
+
+        self._temp_input = None
+
     def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
 
         if not retrofit:
@@ -209,7 +391,8 @@ class Model:
                            'scenarios': self.scenarios,
                            'x_columns': self.x_columns,
                            'y_columns': self.y_columns}
-        x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data)
+        encode_fields = {'organisation': 'organisations', 'year': 'years', 'month': 'months'}
+        x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data, encode_fields)
 
         self.x_columns = x_columns
         self.y_columns = y_columns
@@ -255,7 +438,8 @@ class Model:
                            'x_columns': self.x_columns,
                            'y_columns': self.y_columns}
 
-        x, x_pd, x_columns = self._data_processor.get_x_for_prediction(data, additional_data)
+        encode_fields = {'organisation': 'organisations', 'year': 'years', 'month': 'months'}
+        x, x_pd, x_columns = self._data_processor.get_x_for_prediction(data, additional_data, encode_fields)
 
         # x_scaler = self._get_scaler(True)
         # x_sc = x_scaler.transform(x)
@@ -273,15 +457,9 @@ class Model:
         data[self.y_columns] = y
 
         graph_bin = None
+
         if get_graph:
-
-            x_graph, y_graph = self._get_dataframe_for_graph(data, graph_data['x_indicator'], graph_data['y_indicator'])
-
-            x_label = graph_data['x_indicator']['report_type'] + '\n' + graph_data['x_indicator']['indicator']
-            y_label = graph_data['y_indicator']['report_type'] + '\n' + graph_data['y_indicator']['indicator']
-            self._make_graph(x_graph, y_graph, x_label, y_label)
-
-            graph_bin = self.read_graph_file()
+            graph_bin = self._get_graph_bin(data, graph_data)
 
         outputs = data.drop(self.x_columns, axis=1)
 
@@ -333,13 +511,6 @@ class Model:
 
         return fi
 
-    def get_feature_importances(self):
-        fi = self._data_processor.read_feature_importances(self.model_id)
-        if not fi:
-            raise ProcessorException('Feature importances is not calculates')
-
-        return fi
-
     def _get_scaler(self, retrofit=False, is_out=False):
 
         if retrofit:
@@ -382,67 +553,146 @@ class Model:
 
         return model
 
-    def _make_graph(self, x, y, x_label, y_label):
 
-        x_max = max(x.max(), -(x.min()))
-        x_mul = math.floor(math.log10(x_max))
-        x_mul = math.floor(x_mul/3)*3
-        x_mul = max(x_mul, 0)
+class LinerModel(BaseModel):
 
-        x = x*10**(-x_mul)
+    type = 'linear_regression'
 
-        y_max = max(y.max(), -(y.min()))
-        y_mul = math.floor(math.log10(y_max))
-        y_mul = math.floor(y_mul/3)*3
-        y_mul = max(y_mul, 0)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-        y = y*10**(-y_mul)
+    def fit(self, **kwargs):
 
-        fig, ax = plt.subplots()
+        data = self._data_processor.read_raw_data(self.x_indicators + self.y_indicators)
 
-        ax.plot(x, y) # , label='y_test')
+        self.update_model(data)
 
-        ax.set_xlabel(x_label + '\n' + '\\ {}'.format(10**x_mul))
-        ax.set_ylabel(y_label + '\n' + '\\ {}'.format(10**y_mul))
-        # ax.legend()
+        additional_data = {'x_indicators': self.x_indicators,
+                           'y_indicators': self.y_indicators,
+                           'periods': self.periods,
+                           'organisations': self.organisations,
+                           'scenarios': self.scenarios,
+                           'x_columns': self.x_columns,
+                           'y_columns': self.y_columns}
+        x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data)
 
-        fig.set_figwidth(8)  # ширина и
-        fig.set_figheight(8)  # высота "Figure"
+        self.x_columns = x_columns
+        self.y_columns = y_columns
 
-        # plt.show()
-        fig.savefig(self.graph_file_name)
+        self._data_processor.write_columns(self.model_id, x_columns, y_columns)
 
-    def read_graph_file(self):
+        x_scaler = self._get_scaler(retrofit=False)
+        x_sc = x_scaler.fit_transform(x)
 
-        f = open(self.graph_file_name, 'rb')
-        result = f.read()
-        f.close()
+        y_scaler = self._get_scaler(retrofit=False, is_out=True)
+        y_sc = y_scaler.fit_transform(y)
 
-        return result
+        inner_model = self._get_inner_model()
 
-    def _get_dataframe_for_graph(self, data, x_indicator, y_indicator):
+        self._inner_model = inner_model
 
-        x_indicator_descr = self._data_processor.get_indicator_from_name_type(x_indicator['indicator'],
-                                                                              x_indicator['report_type'])
-        x_column = x_indicator_descr['indicator_id'] + '_value'
+        inner_model.fit(x_sc, y_sc)
 
-        y_indicator_descr = self._data_processor.get_indicator_from_name_type(y_indicator['indicator'],
-                                                                              y_indicator['report_type'])
-        y_column = y_indicator_descr['indicator_id'] + '_value'
+        self._data_processor.write_scaler(self.model_id, x_scaler)
+        self._data_processor.write_scaler(self.model_id, y_scaler, is_out=True)
 
-        data = data[[x_column, y_column]]
+        y_pred = inner_model.predict(x_sc)
 
-        data = data.sort_values(by=[x_column])
-        data_sum = data.groupby([x_column]).sum()
-        data_sum = data_sum.reset_index()
-        data_count = data.groupby([x_column]).count()
-        data_count = data_count.reset_index()
+        mse = mean_squared_error(y_sc, y_pred)
+        print("RMSE: {}".format(np.sqrt(mse)))
 
-        data_sum[y_column] = data_sum[y_column]/data_count[y_column]
+        self._data_processor.write_inner_model(self.model_id, self._inner_model, use_pickle=True)
 
-        data = data_sum
+        return np.sqrt(mse)
 
-        return np.array(data[x_column]), np.array(data[y_column])
+    def predict(self, inputs, get_graph=False, graph_data=None):
+
+        data = pd.DataFrame(inputs)
+        additional_data = {'x_indicators': self.x_indicators,
+                           'y_indicators': self.y_indicators,
+                           'periods': self.periods,
+                           'organisations': self.organisations,
+                           'scenarios': self.scenarios,
+                           'x_columns': self.x_columns,
+                           'y_columns': self.y_columns}
+
+        x, x_pd, x_columns = self._data_processor.get_x_for_prediction(data, additional_data)
+
+        x_scaler = self._get_scaler(retrofit=True)
+        x_sc = x_scaler.transform(x)
+
+        inner_model = self._get_inner_model(for_prediction=True)
+
+        y_sc = inner_model.predict(x_sc)
+        y_scaler = self._get_scaler(retrofit=True, is_out=True)
+        y = y_scaler.inverse_transform(y_sc)
+
+        data = x_pd.copy()
+        data[self.y_columns] = y
+
+        graph_bin = None
+
+        if get_graph:
+            graph_bin = self._get_graph_bin(data, graph_data)
+
+        outputs = data.drop(self.x_columns, axis=1)
+
+        indicators_description = {x_ind: {'indicator': self._data_processor.get_indicator_name(x_ind),
+                                          'report_type': self._data_processor.get_indicator_report_type(x_ind)}
+                                  for x_ind in self.x_indicators + self.y_indicators}
+
+        return outputs.to_dict('records'), indicators_description, graph_bin
+
+    def calculate_feature_importances(self, **kwargs):
+
+        inner_model = self._get_inner_model(for_prediction=True)
+
+        fi = pd.DataFrame(inner_model.coef_[0], columns=['feature_importance'])
+
+        fi['feature'] = self.x_columns
+        fi = fi.sort_values(by='feature_importance', ascending=False)
+        fi['indicator'] = fi['feature'].apply(self._data_processor.get_indicator_name)
+        fi['report_type'] = fi['feature'].apply(self._data_processor.get_indicator_report_type)
+
+        fi = fi.to_dict('records')
+        self._data_processor.write_feature_importances(self.model_id, fi)
+
+        return fi
+
+    def _get_scaler(self, retrofit=False, is_out=False):
+
+        if retrofit:
+            scaler = self._data_processor.read_scaler(self.model_id, is_out)
+            if not scaler:
+                scaler = StandardScaler()
+        else:
+            scaler = StandardScaler()
+
+        return scaler
+
+    def _get_inner_model(self, for_prediction=False):
+
+        if for_prediction:
+            inner_model = self._data_processor.read_inner_model(self.model_id, use_pickle=True)
+
+            if not inner_model:
+                raise ProcessorException('model id={} is not found'.format(self.model_id))
+        else:
+            inner_model = self._create_inner_model()
+
+        self._inner_model = inner_model
+
+        return inner_model
+
+    def _get_model_for_feature_importances(self):
+        return self._get_inner_model()
+
+    @staticmethod
+    def _create_inner_model():
+
+        model = LinearRegression()# tol=.0001, eta0=.01)
+
+        return model
 
 
 class DataProcessor:
@@ -502,7 +752,7 @@ class DataProcessor:
 
         return result
 
-    def read_raw_data(self, indicators, date_from):
+    def read_raw_data(self, indicators, date_from=None):
         raw_data = self._db_connector.read_raw_data(indicators, date_from)
         return raw_data
 
@@ -517,7 +767,7 @@ class DataProcessor:
     def write_model_to_db(self, model_description):
         self._db_connector.write_model_description(model_description)
 
-    def get_x_y_for_fitting(self, data, additional_data):
+    def get_x_y_for_fitting(self, data, additional_data, encode_fields=None):
 
         data = pd.DataFrame(data)
 
@@ -530,7 +780,8 @@ class DataProcessor:
         additional_data['years'] = list(set([self._get_year(period) for period in additional_data['periods']]))
         additional_data['months'] = list(set([self._get_month(period) for period in additional_data['periods']]))
 
-        data = self._prepare_dataset_one_hot_encode(data, additional_data)
+        if encode_fields:
+            data = self._prepare_dataset_one_hot_encode(data, additional_data, encode_fields)
 
         inputs = data.copy()
         inputs = inputs.drop([indicator + '_value' for indicator in additional_data['y_indicators']], axis=1)
@@ -547,7 +798,7 @@ class DataProcessor:
 
         return x, y, x_columns, y_columns
 
-    def get_x_for_prediction(self, data, additional_data):
+    def get_x_for_prediction(self, data, additional_data, encode_fields=None):
 
         data['indicator_id'] = data[['indicator', 'report_type']].apply(self._get_indicator_id_one_arg, axis=1)
         data['loading_date'] = None # datetime.datetime.now()
@@ -560,7 +811,8 @@ class DataProcessor:
         additional_data['years'] = list(set([self._get_year(period) for period in additional_data['periods']]))
         additional_data['months'] = list(set([self._get_month(period) for period in additional_data['periods']]))
 
-        data = self._prepare_dataset_one_hot_encode(data, additional_data)
+        if encode_fields:
+            data = self._prepare_dataset_one_hot_encode(data, additional_data, encode_fields)
 
         x = data.drop(['organisation', 'scenario', 'period', 'month', 'year'], axis=1)
         x_columns = list(x.columns)
@@ -589,38 +841,51 @@ class DataProcessor:
         scaler_packed = model_description[scaler_name]
         return pickle.loads(scaler_packed)
 
-    def write_inner_model(self, model_id, inner_model):
-        if not os.path.isdir('tmp'):
-            os.mkdir('tmp')
+    def write_inner_model(self, model_id, inner_model, use_pickle=False):
+        if use_pickle:
+            model_packed = pickle.dumps(inner_model, protocol=pickle.HIGHEST_PROTOCOL)
+        else:
+            if not os.path.isdir('tmp'):
+                os.mkdir('tmp')
 
-        inner_model.save('tmp/model')
+            inner_model.save('tmp/model')
 
-        zipf = zipfile.ZipFile('tmp/model.zip', 'w', zipfile.ZIP_DEFLATED)
-        self._zipdir('tmp/model', zipf)
-        zipf.close()
+            zipf = zipfile.ZipFile('tmp/model.zip', 'w', zipfile.ZIP_DEFLATED)
+            self._zipdir('tmp/model', zipf)
+            zipf.close()
 
-        with open('tmp/model.zip', 'rb') as f:
-            model_packed = f.read()
+            with open('tmp/model.zip', 'rb') as f:
+                model_packed = f.read()
 
         self._db_connector.write_inner_model(model_id, model_packed)
 
-        os.remove('tmp/model.zip')
-        shutil.rmtree('tmp/model')
+        if not use_pickle:
+            os.remove('tmp/model.zip')
+            shutil.rmtree('tmp/model')
 
-    def read_inner_model(self, model_id):
+    def read_inner_model(self, model_id, use_pickle=False):
 
-        if not os.path.isdir('tmp'):
-            os.mkdir('tmp')
+        if use_pickle:
+            model_description = self.read_model_description_from_db(model_id)
+            inner_model = pickle.loads(model_description['inner_model'])
+        else:
 
-        model_description = self.read_model_description_from_db(model_id)
-        inner_model = model_description['inner_model']
-        with open('tmp/model.zip', 'wb') as f:
-            f.write(inner_model)
+            if not os.path.isdir('tmp'):
+                os.mkdir('tmp')
 
-        with zipfile.ZipFile('tmp/model.zip', 'r') as zip_h:
-            zip_h.extractall('tmp/model')
+            model_description = self.read_model_description_from_db(model_id)
+            inner_model = model_description['inner_model']
+            with open('tmp/model.zip', 'wb') as f:
+                f.write(inner_model)
 
-        inner_model = keras.models.load_model('tmp/model')
+            with zipfile.ZipFile('tmp/model.zip', 'r') as zip_h:
+                zip_h.extractall('tmp/model')
+
+            inner_model = keras.models.load_model('tmp/model')
+
+            if not use_pickle:
+                os.remove('tmp/model.zip')
+                shutil.rmtree('tmp/model')
 
         return inner_model
 
@@ -665,11 +930,9 @@ class DataProcessor:
 
         return dataset
 
-    def _prepare_dataset_one_hot_encode(self, dataset, additional_data):
+    def _prepare_dataset_one_hot_encode(self, dataset, additional_data, encode_fields):
 
-        fields_dict = {'organisation': additional_data['organisations'],
-                       'year': additional_data['years'],
-                       'month': additional_data['months']}
+        fields_dict = {encode_1: additional_data[encode_2] for encode_1, encode_2 in encode_fields.items()}
 
         for field_name, field_values in fields_dict.items():
             dataset = self._one_hot_encode(dataset, field_name, field_values)
@@ -772,10 +1035,12 @@ def calculate_feature_importances(parameters):
 def get_feature_importances(parameters):
 
     processor = ModelProcessor(parameters)
-    fi = processor.get_feature_importances(parameters)
+    get_graph = parameters.get('get_graph')
+    fi, graph_bin = processor.get_feature_importances(parameters)
 
     result = dict(status='OK', error_text='', result=fi, description='model feature importances recieved')
-
+    if get_graph:
+        result['graph_data'] = base64.b64encode(graph_bin).decode(encoding='utf-8')
     return result
 
 
