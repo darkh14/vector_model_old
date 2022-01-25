@@ -23,6 +23,7 @@ from tensorflow.keras import optimizers
 from tensorflow import keras
 
 import matplotlib.pyplot as plt
+import matplotlib
 import base64
 
 import pickle
@@ -301,6 +302,8 @@ class BaseModel:
         fig.set_figwidth(8)  # ширина и
         fig.set_figheight(8)  # высота "Figure"
 
+        ax.grid()
+
         # plt.show()
         fig.savefig(self.graph_file_name)
 
@@ -354,6 +357,13 @@ class BaseModel:
 
         fig.set_figwidth(8)  # ширина и
         fig.set_figheight(8)  # высота "Figure"
+
+        ax.grid()
+        ax.set_xlim(xmin=indexes[0]-0.5, xmax=indexes[-1]+0.5)
+
+        locator = matplotlib.ticker.MultipleLocator(base=1)
+
+        ax.xaxis.set_major_locator(locator)
 
         # plt.show()
         fig.savefig(self.graph_fi_file_name)
