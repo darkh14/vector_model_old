@@ -132,7 +132,7 @@ class ModelProcessor:
 
         self.model = self._get_model(model_description)
 
-        result = self.model.get_feature_importances(parameters.get('get_graph'))
+        result = self.model.get_rsme()
 
         return result
 
@@ -934,7 +934,7 @@ class DataProcessor:
 
     def read_model_field(self, model_id, field_name):
         model_description = self.read_model_description_from_db(model_id)
-        value = model_description[field_name]
+        value = model_description.get(field_name)
         return value
 
     @staticmethod
