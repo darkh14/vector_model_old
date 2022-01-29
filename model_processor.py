@@ -638,8 +638,10 @@ class LinerModel(BaseModel):
 
         y_pred = y_scaler.inverse_transform(y_pred_sc)
 
-        mse = mean_squared_error(y, y_pred)
-        print("RMSE: {}".format(np.sqrt(mse)))
+        rmse = np.sqrt(mean_squared_error(y, y_pred))
+        print("RMSE: {}".format(rmse))
+
+        self._data_processor.write_model_field(self.model_id, 'rsme', rmse)
 
         self._data_processor.write_inner_model(self.model_id, self._inner_model, use_pickle=True)
 
