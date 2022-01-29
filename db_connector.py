@@ -122,7 +122,9 @@ class Connector:
 
     def read_raw_data(self, indicators, date_from):
         collection = self.get_collection('raw_data')
-        db_filter = {'indicator_id': {'$in': indicators}}
+        db_filter = dict()
+        if indicators:
+            db_filter['indicator_id'] = {'$in': indicators}
         if date_from:
             db_filter['loading_date'] = {'$gte': datetime.strptime(date_from, '%d.%m.%Y')}
 

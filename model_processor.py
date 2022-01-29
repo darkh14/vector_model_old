@@ -123,6 +123,19 @@ class ModelProcessor:
 
         return result, graph_bin
 
+    def get_rsme(self, parameters):
+
+        model_description = parameters.get('model')
+
+        if not model_description:
+            raise ProcessorException('model is not in parameters')
+
+        self.model = self._get_model(model_description)
+
+        result = self.model.get_feature_importances(parameters.get('get_graph'))
+
+        return result
+
     @staticmethod
     def _get_model(model_description):
 
@@ -142,9 +155,9 @@ class ModelProcessor:
             raise ProcessorException('model type "{}" is not supported'.format(model_type))
 
         model = model_class(model_description['id'],
-                            model_description['name'],
-                            model_description['x_indicators'],
-                            model_description['y_indicators'],
+                            model_description.get('name'),
+                            model_description.get('x_indicators'),
+                            model_description.get('y_indicators'),
                             need_to_update=need_to_update)
 
         return model
@@ -246,12 +259,20 @@ class BaseModel:
     def get_feature_importances(self, get_graph=False):
         fi = self._data_processor.read_feature_importances(self.model_id)
         if not fi:
-            raise ProcessorException('Feature importances is not calculates')
+            raise ProcessorException('Feature importances is not calculated')
         graph_bin = None
         if get_graph:
             graph_bin = self._get_fi_graph_bin(fi)
 
         return fi, graph_bin
+
+    def get_rsme(self):
+        rsme = self._data_processor.read_model_field(self.model_id, 'rsme')
+
+        if not rsme and rsme != 0:
+            raise ProcessorException('Rsme is not calculated')
+
+        return rsme
 
     def _get_scaler(self, retrofit=False, is_out=False):
 
@@ -328,14 +349,13 @@ class BaseModel:
         data = data[[x_column, y_column]]
 
         data = data.sort_values(by=[x_column])
-        data_sum = data.groupby([x_column]).sum()
-        data_sum = data_sum.reset_index()
-        data_count = data.groupby([x_column]).count()
-        data_count = data_count.reset_index()
-
-        data_sum[y_column] = data_sum[y_column]/data_count[y_column]
+        data_g = data.groupby(x_column, as_index=False)
+        data_sum = data_g.sum()
+        data_count = data_g.count()
 
         data = data_sum
+
+        data[y_column] = data_sum[y_column]/data_count[y_column]
 
         return np.array(data[x_column]), np.array(data[y_column])
 
@@ -388,7 +408,7 @@ class NeuralNetworkModel(BaseModel):
         else:
             date_from = datetime.datetime.strptime(date_from, '%d.%m.%Y')
 
-        data = self._data_processor.read_raw_data(self.x_indicators + self.y_indicators, date_from)
+        data = self._data_processor.read_raw_data(indicators=None, date_from=date_from) # self.x_indicators + self.y_indicators, date_from)
         if retrofit and self.need_to_update:
             raise ProcessorException('Model can not be updated when retrofit')
 
@@ -424,7 +444,7 @@ class NeuralNetworkModel(BaseModel):
         normalizer = inner_model.layers[0]
         normalizer.adapt(x)
 
-        inner_model.compile(optimizer=optimizers.Adam(learning_rate=0.1), loss='MeanSquaredError',
+        inner_model.compile(optimizer=optimizers.Adam(learning_rate=0.01), loss='MeanSquaredError',
                             metrics=['RootMeanSquaredError'])
         history = inner_model.fit(x, y, epochs=self._epochs, verbose=2, validation_split=self._validation_split)
 
@@ -432,6 +452,13 @@ class NeuralNetworkModel(BaseModel):
 
         # self._data_processor.write_scaler(self.model_id, x_scaler)
         # self._data_processor.write_scaler(self.model_id, y_scaler, is_out=True)
+
+        y_pred = inner_model.predict(x)
+
+        rmse = np.sqrt(mean_squared_error(y, y_pred))
+        print("RMSE: {}".format(rmse))
+
+        self._data_processor.write_model_field(self.model_id, 'rsme', rmse)
 
         self._data_processor.write_inner_model(self.model_id, self._inner_model)
 
@@ -548,7 +575,7 @@ class NeuralNetworkModel(BaseModel):
     def _get_model_for_feature_importances(self):
         model_copy = clone_model(self._inner_model) # self._create_inner_model(len(self.x_columns), len(self.y_columns))
         model_copy.layers[0].adapt(self._temp_input)
-        model_copy.compile(optimizer=optimizers.Adam(learning_rate=0.1), loss='MeanSquaredError',
+        model_copy.compile(optimizer=optimizers.Adam(learning_rate=0.01), loss='MeanSquaredError',
                            metrics=['RootMeanSquaredError'])
         return model_copy
 
@@ -558,7 +585,8 @@ class NeuralNetworkModel(BaseModel):
         model = Sequential()
         normalizer = Normalization(axis=-1)
         model.add(normalizer)
-        model.add(Dense(150, activation="relu", input_shape=(inputs_number,), name='dense_1'))
+        model.add(Dense(300, activation="relu", input_shape=(inputs_number,), name='dense_1'))
+        model.add(Dense(100, activation="relu", input_shape=(inputs_number,), name='dense_1-1'))
         model.add(Dense(outputs_number, activation="linear", name='dense_4'))
 
         return model
@@ -606,9 +634,11 @@ class LinerModel(BaseModel):
         self._data_processor.write_scaler(self.model_id, x_scaler)
         self._data_processor.write_scaler(self.model_id, y_scaler, is_out=True)
 
-        y_pred = inner_model.predict(x_sc)
+        y_pred_sc = inner_model.predict(x_sc)
 
-        mse = mean_squared_error(y_sc, y_pred)
+        y_pred = y_scaler.inverse_transform(y_pred_sc)
+
+        mse = mean_squared_error(y, y_pred)
         print("RMSE: {}".format(np.sqrt(mse)))
 
         self._data_processor.write_inner_model(self.model_id, self._inner_model, use_pickle=True)
@@ -762,7 +792,7 @@ class DataProcessor:
 
         return result
 
-    def read_raw_data(self, indicators, date_from=None):
+    def read_raw_data(self, indicators=None, date_from=None):
         raw_data = self._db_connector.read_raw_data(indicators, date_from)
         return raw_data
 
@@ -1051,6 +1081,16 @@ def get_feature_importances(parameters):
     result = dict(status='OK', error_text='', result=fi, description='model feature importances recieved')
     if get_graph:
         result['graph_data'] = base64.b64encode(graph_bin).decode(encoding='utf-8')
+    return result
+
+
+def get_rsme(parameters):
+
+    processor = ModelProcessor(parameters)
+    rsme = processor.get_rsme(parameters)
+
+    result = dict(status='OK', error_text='', result=rsme, description='model rsme recieved')
+
     return result
 
 
