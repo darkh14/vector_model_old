@@ -645,7 +645,7 @@ class LinerModel(BaseModel):
 
         self._data_processor.write_inner_model(self.model_id, self._inner_model, use_pickle=True)
 
-        return np.sqrt(mse)
+        return rmse
 
     def predict(self, inputs, get_graph=False, graph_data=None):
 
