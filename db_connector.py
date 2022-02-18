@@ -1,7 +1,7 @@
 import pymongo
 from logger import ProcessorException as ProcessorException
 import settings_controller
-import numpy as np
+import hashlib
 
 from datetime import datetime
 
@@ -65,7 +65,7 @@ class Connector:
         print('---Loading raw data started---')
 
     def read_indicator_from_id(self, indicator_id):
-        result = self._read_line('indicators', {'indicator_id': indicator_id})
+        result = self._read_line('indicators', {'id': indicator_id})
         if result:
             result.pop('_id')
 
@@ -78,9 +78,15 @@ class Connector:
 
         return result
 
-    def write_indicator(self, indicator_id, indicator, report_type):
-        line = {'indicator_id': indicator_id, 'indicator': indicator, 'report_type': report_type}
-        self._write_line('indicators', line, selections=['indicator_id'])
+    def write_indicator(self, indicator_id, indicator_name, report_type):
+        line = {'id': indicator_id, 'name': indicator_name, 'report_type': report_type}
+        line['short_id'] = self.get_short_id(indicator_id)
+        self._write_line('indicators', line, selections=['id'])
+
+    def write_analytics(self, analytics_id, analytics_name, analytics_type):
+        line = {'id': analytics_id, 'name': analytics_name, 'type': analytics_type}
+        line['short_id'] = self.get_short_id(analytics_id + ' ' + analytics_type)
+        self._write_line('analytics', line, selections=['id', 'type'])
 
     def read_model_description(self, model_id):
         return self._read_line('models', {'model_id': model_id})
@@ -178,6 +184,13 @@ class Connector:
             raise ProcessorException('collection {} not found in db {}'.format(collection_name, self.db_name))
 
         return collection
+
+    @staticmethod
+    def get_short_id(data_str):
+        if not data_str.replace(' ', ''):
+            return ''
+        data_hash = hashlib.md5(data_str.encode())
+        return data_hash.hexdigest()[-7:]
 
     def _connect(self, **kwargs):
 

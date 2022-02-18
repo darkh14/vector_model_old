@@ -149,7 +149,7 @@ class ModelProcessor:
         if model_type == 'neural_network':
             model_class = NeuralNetworkModel
         elif model_type == 'linear_regression':
-            model_class = LinerModel
+            model_class = LinearModel
 
         if not model_class:
             raise ProcessorException('model type "{}" is not supported'.format(model_type))
@@ -158,7 +158,8 @@ class ModelProcessor:
                             model_description.get('name'),
                             model_description.get('x_indicators'),
                             model_description.get('y_indicators'),
-                            need_to_update=need_to_update)
+                            need_to_update=need_to_update,
+                            model_filter=model_description.get('filter'))
 
         return model
 
@@ -168,7 +169,8 @@ class BaseModel:
     __metaclass__ = ABCMeta
     type = ''
 
-    def __init__(self, model_id, name='', x_indicators=None, y_indicators=None, need_to_update=False):
+    def __init__(self, model_id, name='', x_indicators=None, y_indicators=None, need_to_update=False,
+                 model_filter=None):
         self.model_id = model_id
         self._db_connector = DB_CONNECTOR
         self._data_processor = DataProcessor()
@@ -177,6 +179,7 @@ class BaseModel:
 
         if description_from_db:
             self.name = description_from_db['name']
+            self.filter = description_from_db.get('filter')
             self.x_indicators = description_from_db['x_indicators']
             self.y_indicators = description_from_db['y_indicators']
             self.periods = description_from_db['periods']
@@ -187,6 +190,7 @@ class BaseModel:
             self.feature_importances = description_from_db.get('feature_importances')
         else:
             self.name = name
+            self.filter = None
             self.x_indicators = []
             self.y_indicators = []
             self.periods = []
@@ -197,10 +201,13 @@ class BaseModel:
             self.feature_importances = []
 
         if x_indicators:
-            self.x_indicators = self._data_processor.get_indicator_ids(x_indicators)
+            self.x_indicators = self._data_processor.get_indicators_data_from_parameters(x_indicators)
 
         if y_indicators:
-            self.y_indicators = self._data_processor.get_indicator_ids(y_indicators)
+            self.y_indicators = self._data_processor.get_indicators_data_from_parameters(y_indicators)
+
+        if model_filter:
+            self.filter = model_filter
 
         self._inner_model = None
         self._retrofit = False
@@ -218,6 +225,7 @@ class BaseModel:
 
             model_description = {'model_id': self.model_id,
                                  'name': self.name,
+                                 'filter': self.filter,
                                  'x_indicators': self.x_indicators,
                                  'y_indicators': self.y_indicators,
                                  'periods': self.periods,
@@ -286,10 +294,13 @@ class BaseModel:
         return scaler
 
     def _get_graph_bin(self, data, graph_data):
-        x_graph, y_graph = self._get_dataframe_for_graph(data, graph_data['x_indicator'], graph_data['y_indicator'])
+        x_graph, y_graph = self._get_dataframe_for_graph(data, graph_data['x_indicator_id'],
+                                                         graph_data['y_indicator_id'])
 
-        x_label = graph_data['x_indicator']['report_type'] + '\n' + graph_data['x_indicator']['indicator']
-        y_label = graph_data['y_indicator']['report_type'] + '\n' + graph_data['y_indicator']['indicator']
+        x_indicator_descr = self._data_processor.get_indicator_description_from_id(graph_data['x_indicator_id'])
+        x_label = x_indicator_descr['report_type'] + '\n' + x_indicator_descr['name']
+        y_indicator_descr = self._data_processor.get_indicator_description_from_id(graph_data['y_indicator_id'])
+        y_label = y_indicator_descr['report_type'] + '\n' + y_indicator_descr['name']
         self._make_graph(x_graph, y_graph, x_label, y_label)
 
         graph_bin = self._read_graph_file()
@@ -336,28 +347,44 @@ class BaseModel:
 
         return result
 
-    def _get_dataframe_for_graph(self, data, x_indicator, y_indicator):
+    def _get_dataframe_for_graph(self, data, x_indicator_id, y_indicator_id):
 
-        x_indicator_descr = self._data_processor.get_indicator_from_name_type(x_indicator['indicator'],
-                                                                              x_indicator['report_type'])
-        x_column = x_indicator_descr['indicator_id'] + '_value'
+        x_indicator_descr = self._data_processor.get_indicator_description_from_id(x_indicator_id)
 
-        y_indicator_descr = self._data_processor.get_indicator_from_name_type(y_indicator['indicator'],
-                                                                              y_indicator['report_type'])
-        y_column = y_indicator_descr['indicator_id'] + '_value'
+        x_columns = []
+        for col in self.x_columns:
+            col_list = col.split('_')
+            if len(col_list)==6:
+                continue
 
-        data = data[[x_column, y_column]]
+            if col_list[1] == x_indicator_descr['short_id']:
+                x_columns.append(col)
 
-        data = data.sort_values(by=[x_column])
-        data_g = data.groupby(x_column, as_index=False)
-        data_sum = data_g.sum()
-        data_count = data_g.count()
+        y_indicator_descr = self._data_processor.get_indicator_description_from_id(y_indicator_id)
+        y_columns = []
+        for col in self.y_columns:
+            col_list = col.split('_')
+            if len(col_list)==6:
+                continue
 
-        data = data_sum
+            if col_list[1] == y_indicator_descr['short_id']:
+                y_columns.append(col)
 
-        data[y_column] = data_sum[y_column]/data_count[y_column]
+        data = data[x_columns + y_columns]
 
-        return np.array(data[x_column]), np.array(data[y_column])
+        data['x'] = data[x_columns].apply(sum, axis=1)
+
+        data['y'] = data[y_columns].apply(sum, axis=1)
+
+        data = data.drop(x_columns + y_columns, axis=1)
+        data = data.sort_values(by=['x'])
+
+        data['count'] = 1
+
+        data = data.groupby(by=['x'], as_index=False).sum()
+        data['y'] = data['y']/data['count']
+
+        return np.array(data['x']), np.array(data['y'])
 
     def _get_fi_graph_bin(self, fi):
 
@@ -408,7 +435,9 @@ class NeuralNetworkModel(BaseModel):
         else:
             date_from = datetime.datetime.strptime(date_from, '%d.%m.%Y')
 
-        data = self._data_processor.read_raw_data(indicators=None, date_from=date_from) # self.x_indicators + self.y_indicators, date_from)
+        indicator_filter = [ind_data['id'] for ind_data in self.x_indicators + self.y_indicators]
+
+        data = self._data_processor.read_raw_data(indicator_filter, date_from=date_from)
         if retrofit and self.need_to_update:
             raise ProcessorException('Model can not be updated when retrofit')
 
@@ -421,8 +450,10 @@ class NeuralNetworkModel(BaseModel):
                            'scenarios': self.scenarios,
                            'x_columns': self.x_columns,
                            'y_columns': self.y_columns}
-        encode_fields = {'organisation': 'organisations', 'year': 'years', 'month': 'months'}
-        x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data, encode_fields)
+        # encode_fields = {'organisation': 'organisations', 'year': 'years', 'month': 'months'}
+        encode_fields = None
+        x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data, encode_fields,
+                                                                              self.filter)
 
         self.x_columns = x_columns
         self.y_columns = y_columns
@@ -475,7 +506,8 @@ class NeuralNetworkModel(BaseModel):
                            'x_columns': self.x_columns,
                            'y_columns': self.y_columns}
 
-        encode_fields = {'organisation': 'organisations', 'year': 'years', 'month': 'months'}
+        # encode_fields = {'organisation': 'organisations', 'year': 'years', 'month': 'months'}
+        encode_fields = None
         x, x_pd, x_columns = self._data_processor.get_x_for_prediction(data, additional_data, encode_fields)
 
         # x_scaler = self._get_scaler(True)
@@ -500,9 +532,7 @@ class NeuralNetworkModel(BaseModel):
 
         outputs = data.drop(self.x_columns, axis=1)
 
-        indicators_description = {x_ind: {'indicator': self._data_processor.get_indicator_name(x_ind),
-                                          'report_type': self._data_processor.get_indicator_report_type(x_ind)}
-                                  for x_ind in self.x_indicators + self.y_indicators}
+        indicators_description = self.x_indicators + self.y_indicators
 
         return outputs.to_dict('records'), indicators_description, graph_bin
 
@@ -592,7 +622,7 @@ class NeuralNetworkModel(BaseModel):
         return model
 
 
-class LinerModel(BaseModel):
+class LinearModel(BaseModel):
 
     type = 'linear_regression'
 
@@ -601,7 +631,9 @@ class LinerModel(BaseModel):
 
     def fit(self, **kwargs):
 
-        data = self._data_processor.read_raw_data(self.x_indicators + self.y_indicators)
+        indicator_filter = [ind_data['id'] for ind_data in self.x_indicators + self.y_indicators]
+
+        data = self._data_processor.read_raw_data(indicator_filter)
 
         self.update_model(data)
 
@@ -744,15 +776,25 @@ class DataProcessor:
         self._db_connector = DB_CONNECTOR
 
     def load_data(self, raw_data, overwrite=False):
-        raw_data = self.add_indicators_to_raw_data(raw_data)
+
+        pd_data = pd.DataFrame(raw_data)
+
+        pd_indicators = pd_data.groupby(['indicator_name', 'indicator_id', 'report_type'], as_index=False).count()
+        indicators_list = pd_indicators[['indicator_name', 'indicator_id', 'report_type']].to_dict(orient='records')
+        for line in indicators_list:
+            self._db_connector.write_indicator(line['indicator_id'], line['indicator_name'], line['report_type'])
+
+        pd_analytics = pd_data.groupby(['analytics_1_type',
+                                        'analytics_1_name', 'analytics_1_id'], as_index=False).count()
+
+        analytics_list = pd_analytics[['analytics_1_type',
+                                        'analytics_1_name', 'analytics_1_id']].to_dict(orient='records')
+
+        for line in analytics_list:
+            self._db_connector.write_analytics(line['analytics_1_id'],
+                                               line['analytics_1_name'], line['analytics_1_type'])
+
         self._db_connector.write_raw_data(raw_data, overwrite=overwrite)
-
-    def add_indicators_to_raw_data(self, raw_data):
-        for line in raw_data:
-            indicator_id = self._get_indicator_id(line['indicator'], line['report_type'])
-            line['indicator_id'] = indicator_id
-
-        return raw_data
 
     def read_model_description_from_db(self, model_id):
         return self._db_connector.read_model_description(model_id)
@@ -767,14 +809,28 @@ class DataProcessor:
                   for ind_line in indicators]
         return result
 
-    def get_indicator_from_name_type(self, indicator, report_type):
-        indicator_line = self._db_connector.read_indicator_from_name_type(indicator, report_type)
-        if not indicator_line:
-            indicator_id = 'ind_' + settings_controller.get_id()
-            indicator_line = {'indicator_id': indicator_id, 'indicator': indicator, 'report_type': report_type}
-            self._db_connector.write_indicator(indicator_line)
+    def get_indicators_data_from_parameters(self, indicator_parameters):
+        result = []
+        for parameters_line in indicator_parameters:
+            result_line = self._db_connector.read_indicator_from_id(parameters_line['id'])
+            result_line.update(parameters_line)
+            result.append(result_line)
 
-        return indicator_line
+        return result
+
+    def get_indicator_description_from_id(self, indicator_id):
+
+        result = self._db_connector.read_indicator_from_id(indicator_id)
+
+        return result
+
+    def get_indicator_short_id(self, indicator_id):
+        result = ''
+        indicator_line = self._db_connector.read_indicator_from_id(indicator_id)
+        if indicator_line:
+            result = indicator_line['short_id']
+
+        return result
 
     def get_indicator_name(self, indicator_id):
         indicator_id = indicator_id.replace('_value', '')
@@ -809,15 +865,18 @@ class DataProcessor:
     def write_model_to_db(self, model_description):
         self._db_connector.write_model_description(model_description)
 
-    def get_x_y_for_fitting(self, data, additional_data, encode_fields=None):
+    def get_x_y_for_fitting(self, data, additional_data, encode_fields=None, model_filter=None):
 
         data = pd.DataFrame(data)
-
+        if model_filter:
+            for filter_field, filter_value in model_filter.items():
+                data = data.loc[data[filter_field]==filter_value].copy()
+        data = self._add_short_ids_to_data(data)
         data_grouped, data_grouped_values = self._prepare_dataset_group(data)
 
         indicators = additional_data['x_indicators'] + additional_data['y_indicators']
 
-        data = self._prepare_dataset_merge(data_grouped, data_grouped_values, indicators)
+        data = self._prepare_dataset_add_indicators_analytics(data_grouped, data_grouped_values, indicators)
 
         additional_data['years'] = list(set([self._get_year(period) for period in additional_data['periods']]))
         additional_data['months'] = list(set([self._get_month(period) for period in additional_data['periods']]))
@@ -825,15 +884,20 @@ class DataProcessor:
         if encode_fields:
             data = self._prepare_dataset_one_hot_encode(data, additional_data, encode_fields)
 
+        data = self._drop_non_numeric_columns(data, indicators)
+
+        data = self._process_na(data, additional_data['y_indicators'])
+
+        y_columns = ['ind_{}'.format(ind_line['short_id']) for ind_line in additional_data['y_indicators']]
+
         inputs = data.copy()
-        inputs = inputs.drop([indicator + '_value' for indicator in additional_data['y_indicators']], axis=1)
+        inputs = inputs.drop(y_columns, axis=1)
 
         outputs = data.copy()
-        outputs = outputs[[indicator + '_value' for indicator in additional_data['y_indicators']]]
+        outputs = outputs[y_columns]
 
-        x = inputs.drop(['organisation', 'scenario', 'period', 'month', 'year'], axis=1)
-        x_columns = list(x.columns)
-        x = x.to_numpy()
+        x_columns = list(inputs.columns)
+        x = inputs.to_numpy()
 
         y_columns = list(outputs.columns)
         y = outputs.to_numpy()
@@ -842,13 +906,14 @@ class DataProcessor:
 
     def get_x_for_prediction(self, data, additional_data, encode_fields=None):
 
-        data['indicator_id'] = data[['indicator', 'report_type']].apply(self._get_indicator_id_one_arg, axis=1)
-        data['loading_date'] = None # datetime.datetime.now()
+        data = pd.DataFrame(data)
+
+        data = self._add_short_ids_to_data(data)
         data_grouped, data_grouped_values = self._prepare_dataset_group(data)
 
         indicators = additional_data['x_indicators']
 
-        data = self._prepare_dataset_merge(data_grouped, data_grouped_values, indicators)
+        data = self._prepare_dataset_add_indicators_analytics(data_grouped, data_grouped_values, indicators)
 
         additional_data['years'] = list(set([self._get_year(period) for period in additional_data['periods']]))
         additional_data['months'] = list(set([self._get_month(period) for period in additional_data['periods']]))
@@ -856,10 +921,12 @@ class DataProcessor:
         if encode_fields:
             data = self._prepare_dataset_one_hot_encode(data, additional_data, encode_fields)
 
-        x = data.drop(['organisation', 'scenario', 'period', 'month', 'year'], axis=1)
-        x_columns = list(x.columns)
+        data = self._drop_non_numeric_columns(data, indicators)
 
-        x = x.to_numpy()
+        data = self._process_na(data)
+
+        x_columns = list(data.columns)
+        x = data.to_numpy()
 
         return x, data, x_columns
 
@@ -939,38 +1006,85 @@ class DataProcessor:
         value = model_description.get(field_name)
         return value
 
+    def _add_short_ids_to_data(self, dataset):
+
+        dataset['indicator_short_id'] = dataset['indicator_id'].apply(self._get_indicator_short_id)
+        dataset['analytics_short_id'] = dataset[['analytics_1_id',
+                                                 'analytics_1_type']].apply(self._get_analytics_short_id, axis=1)
+
+        return dataset
+
     @staticmethod
     def _prepare_dataset_group(dataset):
 
-        columns_to_drop = ['indicator', 'report_type']
+        columns_to_drop = ['indicator_name', 'indicator_id', 'report_type', 'analytics_1_id', 'analytics_1_name',
+                           'analytics_1_type']
         if '_id' in list(dataset.columns):
             columns_to_drop.append('_id')
 
         dataset.drop(columns_to_drop, axis=1, inplace=True)
-        dataset.rename({'indicator_id': 'indicator'}, axis=1, inplace=True)
+        dataset.rename({'indicator_short_id': 'indicator'}, axis=1, inplace=True)
+        dataset.rename({'analytics_short_id': 'analytics'}, axis=1, inplace=True)
 
-        data_grouped_values = dataset.groupby(['indicator', 'organisation', 'scenario', 'period'])
-        data_grouped_values = data_grouped_values.max()
-        data_grouped_values = data_grouped_values.reset_index()
+        data_grouped_values = dataset.groupby(['indicator', 'analytics', 'organisation', 'scenario', 'period'],
+                                              as_index=False)
+        data_grouped_values = data_grouped_values.sum()
+        data_grouped_values = data_grouped_values[['indicator', 'analytics', 'organisation', 'scenario', 'period',
+                                                   'value']]
 
-        data_grouped = dataset.groupby(['organisation', 'scenario', 'period']).max()
-        data_grouped = data_grouped.reset_index()
+        data_grouped = dataset.groupby(['organisation', 'scenario', 'period'], as_index=False).max()
         data_grouped = data_grouped[['organisation', 'scenario', 'period']]
 
         return data_grouped, data_grouped_values
 
-    def _prepare_dataset_merge(self, dataset, dataset_grouped_values, indicators):
+    def _prepare_dataset_add_indicators_analytics(self, dataset, dataset_grouped_values, indicators):
 
-        for ind in indicators:
-            data_grouped_ind = dataset_grouped_values[(dataset_grouped_values['indicator'] == ind)]
-            dataset = dataset.merge(data_grouped_ind, how='left', on=['organisation', 'period', 'scenario'])
-            dataset = dataset.rename({'value': '{}_value'.format(ind)}, axis=1)
-            dataset = dataset.drop(['version', 'indicator', 'loading_date'], axis=1)
+        data_pr = dataset.copy()
+        data_pr = self._add_shifting_periods_to_data(data_pr, indicators)
 
-        dataset = dataset.fillna(0)
-        dataset = self._add_month_year_to_data(dataset)
+        for ind_line in indicators:
+            period_shift = ind_line.get('period_shift') or 0
+            if period_shift:
+                period_column = 'period_' + ('m{}'.format(-period_shift) if period_shift < 0
+                                             else 'p{}'.format(period_shift))
+            else:
+                period_column = 'period'
 
-        return dataset
+            with_analytics = ind_line.get('use_analytics')
+
+            data_str = dataset_grouped_values.loc[(dataset_grouped_values['indicator'] == ind_line['short_id'])]
+            if with_analytics:
+                c_analytics = list(data_str['analytics'].unique())
+                if '' in c_analytics:
+                    c_analytics.pop(c_analytics.index(''))
+            else:
+                c_analytics = ['']
+
+            for an_el in c_analytics:
+
+                data_str_a = data_str.loc[(data_str['analytics'] == an_el)]
+
+                data_str_a = data_str_a.groupby(['organisation', 'scenario', 'period'], as_index=False).sum()
+                if period_column != 'period':
+                    data_str_a = data_str_a.rename({'period': period_column}, axis=1)
+
+                data_str_a = data_str_a[['organisation', 'scenario', period_column, 'value']]
+
+                data_pr = data_pr.merge(data_str_a, on=['organisation', 'scenario', period_column], how='left')
+
+                column_name = 'ind_{}'.format(ind_line['short_id'])
+
+                if with_analytics:
+                    column_name = '{}_an_{}'.format(column_name, an_el)
+
+                if period_shift:
+                    column_name = '{}_p_'.format(column_name) + ('m{}'.format(-period_shift) if period_shift < 0
+                                                                 else 'p{}'.format(period_shift))
+
+                data_pr = data_pr.rename({'value': column_name}, axis=1)
+
+        data_pr = self._add_month_year_to_data(data_pr)
+        return data_pr
 
     def _prepare_dataset_one_hot_encode(self, dataset, additional_data, encode_fields):
 
@@ -986,6 +1100,93 @@ class DataProcessor:
         dataset['year'] = dataset['period'].apply(self._get_year)
 
         return dataset
+
+    def _add_shifting_periods_to_data(self, dataset, indicators):
+
+        period_numbers = [ind_line.get('period_shift') for ind_line in indicators if ind_line.get('period_shift')]
+        period_columns = []
+        dataset['shift'] = 0
+        for period_num in period_numbers:
+
+            column_name = 'period_' + ('p{}'.format(period_num) if period_num > 0 else 'm{}'.format(-period_num))
+            period_columns.append(column_name)
+
+            dataset['shift'] = period_num
+            dataset[column_name] = dataset[['period', 'shift']].apply(self._get_shifting_period, axis=1)
+
+        dataset = dataset.drop(['shift'], axis=1)
+        return dataset
+
+    @staticmethod
+    def _drop_non_numeric_columns(dataset, indicators):
+
+        columns_to_drop = ['organisation', 'scenario', 'period', 'year', 'month']
+        period_numbers = [ind_line.get('period_shift') for ind_line in indicators if ind_line.get('period_shift')]
+        period_columns = []
+        for period_num in period_numbers:
+            column_name = 'period_' + ('p{}'.format(period_num) if period_num > 0 else 'm{}'.format(-period_num))
+            period_columns.append(column_name)
+
+        columns_to_drop = columns_to_drop + period_columns
+
+        dataset = dataset.drop(columns_to_drop, axis=1)
+
+        return dataset
+
+    def _process_na(self, dataset, y_indicators=None):
+
+        if y_indicators:
+            y_columns = ['ind_{}'.format(ind_line['short_id']) for ind_line in y_indicators]
+
+            dataset['y_na'] = dataset[y_columns].apply(self._get_na, axis=1)
+
+            dataset = dataset.loc[dataset['y_na'] == False]
+
+            dataset = dataset.drop(['y_na'], axis=1)
+
+        dataset = dataset.fillna(0)
+
+        return dataset
+
+    @staticmethod
+    def _get_na(data_line):
+        is_na = False
+        for el in data_line:
+            is_na = math.isnan(el)
+            if is_na:
+                break
+
+        return is_na
+
+    @staticmethod
+    def _get_shifting_period(period_data):
+
+        period = period_data['period']
+        shift = period_data['shift']
+
+        month = int(period.split('.')[1])
+        year = int(period.split('.')[2])
+
+        month_shift = shift % (12 if shift > 0 else -12)
+        year_shift = shift // (12 if shift > 0 else -12)
+
+        month += month_shift
+        year += year_shift
+
+        if month < 1:
+            month += 12
+            year -=1
+        elif month > 12:
+            month -=12
+            year +=1
+
+        return '01.{:02}.{}'.format(month, year)
+
+    def _get_indicator_short_id(self, indicator_id):
+        return self._db_connector.get_short_id(indicator_id)
+
+    def _get_analytics_short_id(self, analytics_data):
+        return self._db_connector.get_short_id(analytics_data[0] + ' ' + analytics_data[1])
 
     @staticmethod
     def _get_year(date_str):
