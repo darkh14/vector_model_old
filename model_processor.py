@@ -294,6 +294,7 @@ class BaseModel:
         return scaler
 
     def _get_graph_bin(self, data, graph_data):
+
         x_graph, y_graph = self._get_dataframe_for_graph(data, graph_data['x_indicator_id'],
                                                          graph_data['y_indicator_id'])
 
@@ -370,7 +371,7 @@ class BaseModel:
             if col_list[1] == y_indicator_descr['short_id']:
                 y_columns.append(col)
 
-        data = data[x_columns + y_columns]
+        data = data[x_columns + y_columns].copy()
 
         data['x'] = data[x_columns].apply(sum, axis=1)
 
@@ -472,10 +473,10 @@ class NeuralNetworkModel(BaseModel):
         self._epochs = epochs or 1000
         self._validation_split = validation_split or 0.2
 
-        normalizer = inner_model.layers[0]
-        normalizer.adapt(x)
+        # normalizer = inner_model.layers[0]
+        # normalizer.adapt(x)
 
-        inner_model.compile(optimizer=optimizers.Adam(learning_rate=0.01), loss='MeanSquaredError',
+        inner_model.compile(optimizer=optimizers.Adam(learning_rate=0.001), loss='MeanSquaredError',
                             metrics=['RootMeanSquaredError'])
         history = inner_model.fit(x, y, epochs=self._epochs, verbose=2, validation_split=self._validation_split)
 
@@ -515,8 +516,8 @@ class NeuralNetworkModel(BaseModel):
 
         inner_model = self._get_inner_model(retrofit=True)
 
-        normalizer = inner_model.layers[0]
-        normalizer.adapt(x)
+        # normalizer = inner_model.layers[0]
+        # normalizer.adapt(x)
 
         y = inner_model.predict(x)
         # y_scaler = self._get_scaler(True, is_out=True)
@@ -526,6 +527,9 @@ class NeuralNetworkModel(BaseModel):
         data[self.y_columns] = y
 
         graph_bin = None
+
+        # data.loc[data['ind_64d3cf1_an_14db0b7'] == 6250000.292968749].to_excel('22.xlsx')
+        data.to_excel('33.xlsx')
 
         if get_graph:
             graph_bin = self._get_graph_bin(data, graph_data)
@@ -613,8 +617,8 @@ class NeuralNetworkModel(BaseModel):
     def _create_inner_model(inputs_number, outputs_number):
 
         model = Sequential()
-        normalizer = Normalization(axis=-1)
-        model.add(normalizer)
+        # normalizer = Normalization(axis=-1)
+        # model.add(normalizer)
         model.add(Dense(300, activation="relu", input_shape=(inputs_number,), name='dense_1'))
         model.add(Dense(100, activation="relu", input_shape=(inputs_number,), name='dense_1-1'))
         model.add(Dense(outputs_number, activation="linear", name='dense_4'))
