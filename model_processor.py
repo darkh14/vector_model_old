@@ -528,9 +528,6 @@ class NeuralNetworkModel(BaseModel):
 
         graph_bin = None
 
-        # data.loc[data['ind_64d3cf1_an_14db0b7'] == 6250000.292968749].to_excel('22.xlsx')
-        data.to_excel('33.xlsx')
-
         if get_graph:
             graph_bin = self._get_graph_bin(data, graph_data)
 
