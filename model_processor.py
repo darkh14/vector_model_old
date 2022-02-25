@@ -617,8 +617,9 @@ class NeuralNetworkModel(BaseModel):
         # normalizer = Normalization(axis=-1)
         # model.add(normalizer)
         model.add(Dense(300, activation="relu", input_shape=(inputs_number,), name='dense_1'))
-        model.add(Dense(100, activation="relu", input_shape=(inputs_number,), name='dense_1-1'))
-        model.add(Dense(outputs_number, activation="linear", name='dense_4'))
+        model.add(Dense(250, activation="relu", input_shape=(inputs_number,), name='dense_2'))
+        model.add(Dense(100, activation="relu", input_shape=(inputs_number,), name='dense_3'))
+        model.add(Dense(outputs_number, activation="linear", name='dense_last'))
 
         return model
 
