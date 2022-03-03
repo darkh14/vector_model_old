@@ -12,12 +12,12 @@ from job_processor import JobProcessor
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
 from keras.wrappers.scikit_learn import KerasRegressor
 import eli5
 from eli5.sklearn import PermutationImportance
 from tensorflow.keras.models import Sequential, clone_model
-from tensorflow.keras.layers import Dense, Normalization
+from tensorflow.keras.layers import Dense
 from tensorflow.keras import optimizers
 
 from tensorflow import keras
@@ -132,9 +132,9 @@ class ModelProcessor:
 
         self.model = self._get_model(model_description)
 
-        result = self.model.get_rsme()
+        rsme, mspe = self.model.get_rsme()
 
-        return result
+        return rsme, mspe
 
     @staticmethod
     def _get_model(model_description):
@@ -276,11 +276,15 @@ class BaseModel:
 
     def get_rsme(self):
         rsme = self._data_processor.read_model_field(self.model_id, 'rsme')
+        mspe = self._data_processor.read_model_field(self.model_id, 'mspe')
 
         if not rsme and rsme != 0:
-            raise ProcessorException('Rsme is not calculated')
+            raise ProcessorException('RSME is not calculated')
 
-        return rsme
+        if not mspe and mspe != 0:
+            raise ProcessorException('MSPE is not calculated')
+
+        return rsme, mspe
 
     def _get_scaler(self, retrofit=False, is_out=False):
 
@@ -416,6 +420,16 @@ class BaseModel:
         # plt.show()
         fig.savefig(self.graph_fi_file_name)
 
+    @staticmethod
+    def _calculate_mspe(y_true, y_pred):
+
+        eps = np.zeros(y_true.shape)
+        eps[:] = 0.0001
+        y_p = np.c_[abs(y_true), abs(y_pred), eps]
+        y_p = np.max(y_p, axis=1).reshape(-1, 1)
+
+        return np.sqrt(np.nanmean(np.square(((y_true - y_pred) / y_p))))
+
 
 class NeuralNetworkModel(BaseModel):
 
@@ -488,9 +502,12 @@ class NeuralNetworkModel(BaseModel):
         y_pred = inner_model.predict(x)
 
         rmse = np.sqrt(mean_squared_error(y, y_pred))
+        mspe = self._calculate_mspe(y, y_pred)
         print("RMSE: {}".format(rmse))
+        print("MSPE: {}".format(mspe))
 
         self._data_processor.write_model_field(self.model_id, 'rsme', rmse)
+        self._data_processor.write_model_field(self.model_id, 'mspe', mspe)
 
         self._data_processor.write_inner_model(self.model_id, self._inner_model)
 
@@ -617,8 +634,9 @@ class NeuralNetworkModel(BaseModel):
         # normalizer = Normalization(axis=-1)
         # model.add(normalizer)
         model.add(Dense(300, activation="relu", input_shape=(inputs_number,), name='dense_1'))
-        model.add(Dense(250, activation="relu", input_shape=(inputs_number,), name='dense_2'))
-        model.add(Dense(100, activation="relu", input_shape=(inputs_number,), name='dense_3'))
+        model.add(Dense(250, activation="relu", name='dense_2'))
+        model.add(Dense(100, activation="relu",  name='dense_3'))
+        model.add(Dense(30, activation="relu", name='dense_4'))
         model.add(Dense(outputs_number, activation="linear", name='dense_last'))
 
         return model
@@ -673,9 +691,12 @@ class LinearModel(BaseModel):
         y_pred = y_scaler.inverse_transform(y_pred_sc)
 
         rmse = np.sqrt(mean_squared_error(y, y_pred))
+        mape = mean_absolute_percentage_error(y, y_pred)
         print("RMSE: {}".format(rmse))
+        print("MAPE: {}".format(mape))
 
         self._data_processor.write_model_field(self.model_id, 'rsme', rmse)
+        self._data_processor.write_model_field(self.model_id, 'mape', mape)
 
         self._data_processor.write_inner_model(self.model_id, self._inner_model, use_pickle=True)
 
@@ -1028,14 +1049,15 @@ class DataProcessor:
         dataset.rename({'indicator_short_id': 'indicator'}, axis=1, inplace=True)
         dataset.rename({'analytics_short_id': 'analytics'}, axis=1, inplace=True)
 
-        data_grouped_values = dataset.groupby(['indicator', 'analytics', 'organisation', 'scenario', 'period'],
+        data_grouped_values = dataset.groupby(['indicator', 'analytics', 'organisation', 'scenario', 'period',
+                                               'periodicity'],
                                               as_index=False)
         data_grouped_values = data_grouped_values.sum()
         data_grouped_values = data_grouped_values[['indicator', 'analytics', 'organisation', 'scenario', 'period',
-                                                   'value']]
+                                                   'periodicity', 'value']]
 
-        data_grouped = dataset.groupby(['organisation', 'scenario', 'period'], as_index=False).max()
-        data_grouped = data_grouped[['organisation', 'scenario', 'period']]
+        data_grouped = dataset.groupby(['organisation', 'scenario', 'period', 'periodicity'], as_index=False).max()
+        data_grouped = data_grouped[['organisation', 'scenario', 'period', 'periodicity']]
 
         return data_grouped, data_grouped_values
 
@@ -1114,7 +1136,7 @@ class DataProcessor:
             period_columns.append(column_name)
 
             dataset['shift'] = period_num
-            dataset[column_name] = dataset[['period', 'shift']].apply(self._get_shifting_period, axis=1)
+            dataset[column_name] = dataset[['period', 'shift', 'periodicity']].apply(self._get_shifting_period, axis=1)
 
         dataset = dataset.drop(['shift'], axis=1)
         return dataset
@@ -1122,7 +1144,7 @@ class DataProcessor:
     @staticmethod
     def _drop_non_numeric_columns(dataset, indicators):
 
-        columns_to_drop = ['organisation', 'scenario', 'period', 'year', 'month']
+        columns_to_drop = ['organisation', 'scenario', 'period', 'periodicity', 'year', 'month']
         period_numbers = [ind_line.get('period_shift') for ind_line in indicators if ind_line.get('period_shift')]
         period_columns = []
         for period_num in period_numbers:
@@ -1158,6 +1180,16 @@ class DataProcessor:
             if is_na:
                 break
 
+        not_el = True
+        if not is_na:
+            for el in data_line:
+                if el:
+                    not_el = False
+                    break
+
+            is_na = not_el
+
+
         return is_na
 
     @staticmethod
@@ -1165,24 +1197,52 @@ class DataProcessor:
 
         period = period_data['period']
         shift = period_data['shift']
+        periodicity = period_data['periodicity']
 
-        month = int(period.split('.')[1])
-        year = int(period.split('.')[2])
+        day, month, year = map(int, period.split('.'))
 
-        month_shift = shift % (12 if shift > 0 else -12)
-        year_shift = shift // (12 if shift > 0 else -12)
+        if periodicity in ['day', 'week', 'decade']:
 
-        month += month_shift
-        year += year_shift
+            period_date = datetime.datetime(year, month, day)
 
-        if month < 1:
-            month += 12
-            year -=1
-        elif month > 12:
-            month -=12
-            year +=1
+            day_shift = shift
+            if periodicity == 'week':
+                day_shift = shift*7
+            elif periodicity == 'decade':
+                day_shift = shift*10
 
-        return '01.{:02}.{}'.format(month, year)
+            period_date = period_date + datetime.timedelta(days=day_shift)
+
+            day = period_date.day
+            month = period_date.month
+            year = period_date.year
+
+        else:
+
+            month_shift = shift
+            if periodicity == 'quarter':
+                month_shift = shift*3
+            elif periodicity == 'half_year':
+                month_shift = shift*6
+            elif periodicity == 'nine_months':
+                month_shift = shift*9
+            elif periodicity == 'year':
+                month_shift = shift*12
+
+            month_shift_ = shift % (12 if shift > 0 else -12)
+            year_shift_ = shift // (12 if shift > 0 else -12)
+
+            month += month_shift_
+            year += year_shift_
+
+            if month < 1:
+                month += 12
+                year -=1
+            elif month > 12:
+                month -=12
+                year +=1
+
+        return '{:02}.{:02}.{}'.format(day, month, year)
 
     def _get_indicator_short_id(self, indicator_id):
         return self._db_connector.get_short_id(indicator_id)
@@ -1292,9 +1352,9 @@ def get_feature_importances(parameters):
 def get_rsme(parameters):
 
     processor = ModelProcessor(parameters)
-    rsme = processor.get_rsme(parameters)
+    rsme, mspe = processor.get_rsme(parameters)
 
-    result = dict(status='OK', error_text='', result=rsme, description='model rsme recieved')
+    result = dict(status='OK', error_text='', rsme=rsme, mspe=mspe, description='model rsme recieved')
 
     return result
 

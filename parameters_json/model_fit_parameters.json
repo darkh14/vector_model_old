@@ -1,1 +1,55 @@
-﻿{"request_type": "model_fit","model": {"name": "Тестовая модель 1","type": "neural_network","id": "19290f90-5f45-11ec-9212-fa163e42cd35","need_to_update": true,"filter": {"organisation": "Производство ООО"},"x_indicators": [{"id": "c7127d91-2513-11ec-9c9f-104a7db0035f","report_type": "00. Показатели","name": "Процент предоплаты клиентов значение","use_analytics": true,"period_shift": 0},{"id": "a67d2c94-2527-11ec-9c9f-104a7db0035f","report_type": "02. Бюджет продаж","name": "Выручка от продаж значение","use_analytics": true,"period_shift": 0},{"id": "a67d2c94-2527-11ec-9c9f-104a7db0035f","report_type": "02. Бюджет продаж","name": "Выручка от продаж значение","use_analytics": true,"period_shift": -1},{"id": "cfed8e45-25a5-11ec-9c9f-104a7db0035f","report_type": "04. Бюджет инвестиционного проекта","name": "Выручка от продаж значение","use_analytics": true,"period_shift": 0},{"id": "c65fc701-25b3-11ec-9c9f-104a7db0035f","report_type": "06. Бюджет выплаты зарплаты","name": "Выплата заработной платы значение","use_analytics": false,"period_shift": 0},{"id": "10f16e19-25c1-11ec-9c9f-104a7db0035f","report_type": "13. Бюджет начислений по лизингу","name": "Начисление лизинговых платежей значение","use_analytics": false,"period_shift": 0},{"id": "64bf2854-25cf-11ec-9c9f-104a7db0035f","report_type": "14. Бюджет платежей","name": "Оплата поставщикам значение","use_analytics": false,"period_shift": 0}],"y_indicators": [{"id": "481d20fb-25e4-11ec-9c9f-104a7db0035f","report_type": "17. Баланс","name": "Денежные средства изменение"}]},"background_job": false,"epochs": 5000,"retrofit": false,"date_from": "15.02.2022","service_name": "vector_model","db": "Srvr=\"nfp-dev1\";Ref=\"uh_vector_model\";"}
+﻿{
+"request_type": "model_fit",
+"model": {
+"name": "Модель Баланс Дебиторская задолженность изменение",
+"type": "neural_network",
+"id": "fa822e41-9571-11ec-9215-fa163e42cd35",
+"need_to_update": true,
+"filter": {
+"organisation": "Производство ООО"
+},
+"x_indicators": [
+{
+"id": "c7127d91-2513-11ec-9c9f-104a7db0035f",
+"report_type": "00. Показатели",
+"name": "Процент предоплаты клиентов значение",
+"use_analytics": true,
+"period_shift": 0
+},
+{
+"id": "a67d2c94-2527-11ec-9c9f-104a7db0035f",
+"report_type": "02. Бюджет продаж",
+"name": "Выручка от продаж значение",
+"use_analytics": true,
+"period_shift": 0
+},
+{
+"id": "a67d2c94-2527-11ec-9c9f-104a7db0035f",
+"report_type": "02. Бюджет продаж",
+"name": "Выручка от продаж значение",
+"use_analytics": true,
+"period_shift": -1
+},
+{
+"id": "cfed8e45-25a5-11ec-9c9f-104a7db0035f",
+"report_type": "04. Бюджет инвестиционного проекта",
+"name": "Выручка от продаж значение",
+"use_analytics": true,
+"period_shift": 0
+}
+],
+"y_indicators": [
+{
+"id": "481d20fa-25e4-11ec-9c9f-104a7db0035f",
+"report_type": "17. Баланс",
+"name": "Дебиторская задолженность изменение"
+}
+]
+},
+"background_job": false,
+"epochs": 100,
+"retrofit": false,
+"date_from": "22.02.2022",
+"service_name": "vector_model",
+"db": "Srvr=\"nfp-dev1\";Ref=\"uh_vector_model\";"
+}
