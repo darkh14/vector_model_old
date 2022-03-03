@@ -528,17 +528,9 @@ class NeuralNetworkModel(BaseModel):
         encode_fields = None
         x, x_pd = self._data_processor.get_x_for_prediction(data, additional_data, encode_fields)
 
-        # x_scaler = self._get_scaler(True)
-        # x_sc = x_scaler.transform(x)
-
         inner_model = self._get_inner_model(retrofit=True)
 
-        # normalizer = inner_model.layers[0]
-        # normalizer.adapt(x)
-
         y = inner_model.predict(x)
-        # y_scaler = self._get_scaler(True, is_out=True)
-        # y = y_scaler.inverse_transform(y_sc)
 
         data = x_pd.copy()
         data[self.y_columns] = y
@@ -945,11 +937,11 @@ class DataProcessor:
         if encode_fields:
             data = self._prepare_dataset_one_hot_encode(data, additional_data, encode_fields)
 
-        data = self._drop_non_numeric_columns(data, indicators)
-
         data = self._process_na(data)
 
-        x = data.to_numpy()
+        data_num = self._drop_non_numeric_columns(data, indicators)
+
+        x = data_num.to_numpy()
 
         return x, data
 
@@ -1161,47 +1153,6 @@ class DataProcessor:
             data_pr = data_pr.merge(data_str_a, on=['organisation', 'scenario', period_column], how='left')
 
             data_pr = data_pr.rename({'value': column}, axis=1)
-
-        # for ind_line in indicators:
-        #     period_shift = ind_line.get('period_shift') or 0
-        #     if period_shift:
-        #         period_column = 'period_' + ('m{}'.format(-period_shift) if period_shift < 0
-        #                                      else 'p{}'.format(period_shift))
-        #     else:
-        #         period_column = 'period'
-        #
-        #     with_analytics = ind_line.get('use_analytics')
-        #
-        #     data_str = dataset_grouped_values.loc[(dataset_grouped_values['indicator'] == ind_line['short_id'])]
-        #     if with_analytics:
-        #         c_analytics = list(data_str['analytics'].unique())
-        #         if '' in c_analytics:
-        #             c_analytics.pop(c_analytics.index(''))
-        #     else:
-        #         c_analytics = ['']
-        #
-        #     for an_el in c_analytics:
-        #
-        #         data_str_a = data_str.loc[(data_str['analytics'] == an_el)]
-        #
-        #         data_str_a = data_str_a.groupby(['organisation', 'scenario', 'period'], as_index=False).sum()
-        #         if period_column != 'period':
-        #             data_str_a = data_str_a.rename({'period': period_column}, axis=1)
-        #
-        #         data_str_a = data_str_a[['organisation', 'scenario', period_column, 'value']]
-        #
-        #         data_pr = data_pr.merge(data_str_a, on=['organisation', 'scenario', period_column], how='left')
-        #
-        #         column_name = 'ind_{}'.format(ind_line['short_id'])
-        #
-        #         if with_analytics:
-        #             column_name = '{}_an_{}'.format(column_name, an_el)
-        #
-        #         if period_shift:
-        #             column_name = '{}_p_'.format(column_name) + ('m{}'.format(-period_shift) if period_shift < 0
-        #                                                          else 'p{}'.format(period_shift))
-        #
-        #         data_pr = data_pr.rename({'value': column_name}, axis=1)
 
         data_pr = self._add_month_year_to_data(data_pr)
         return data_pr
