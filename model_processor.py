@@ -526,7 +526,7 @@ class NeuralNetworkModel(BaseModel):
 
         # encode_fields = {'organisation': 'organisations', 'year': 'years', 'month': 'months'}
         encode_fields = None
-        x, x_pd, x_columns = self._data_processor.get_x_for_prediction(data, additional_data, encode_fields)
+        x, x_pd = self._data_processor.get_x_for_prediction(data, additional_data, encode_fields)
 
         # x_scaler = self._get_scaler(True)
         # x_sc = x_scaler.transform(x)
@@ -935,8 +935,9 @@ class DataProcessor:
         data_grouped, data_grouped_values = self._prepare_dataset_group(data)
 
         indicators = additional_data['x_indicators']
+        x_columns = additional_data['x_columns']
 
-        data = self._prepare_dataset_add_indicators_analytics(data_grouped, data_grouped_values, indicators)
+        data = self._prepare_dataset_add_columns_for_prediction(data_grouped, data_grouped_values, indicators, x_columns)
 
         additional_data['years'] = list(set([self._get_year(period) for period in additional_data['periods']]))
         additional_data['months'] = list(set([self._get_month(period) for period in additional_data['periods']]))
@@ -948,10 +949,9 @@ class DataProcessor:
 
         data = self._process_na(data)
 
-        x_columns = list(data.columns)
         x = data.to_numpy()
 
-        return x, data, x_columns
+        return x, data
 
     def write_columns(self, model_id, x_columns, y_columns):
         self._db_connector.write_model_columns(model_id, x_columns, y_columns)
@@ -1106,6 +1106,102 @@ class DataProcessor:
                                                                  else 'p{}'.format(period_shift))
 
                 data_pr = data_pr.rename({'value': column_name}, axis=1)
+
+        data_pr = self._add_month_year_to_data(data_pr)
+        return data_pr
+
+    def _prepare_dataset_add_columns_for_prediction(self, dataset, dataset_grouped_values, indicators, columns):
+
+        data_pr = dataset.copy()
+        data_pr = self._add_shifting_periods_to_data(data_pr, indicators)
+
+        for column in columns:
+
+            col_list = column.split('_')
+            with_analytics = False
+            period_shift = 0
+            ind = ''
+            an = ''
+            if len(col_list) == 2:
+                ind = col_list[1]
+            elif len(col_list) == 4:
+                ind = col_list[1]
+                if col_list[2] == 'an':
+                    with_analytics = True
+                    an = col_list[3]
+                else:
+                    period_shift = col_list[3]
+                    if period_shift[0] == 'p':
+                        period_shift = int(period_shift[1:])
+                    else:
+                        period_shift = -int(period_shift[1:])
+            else:
+                ind = col_list[1]
+                an = col_list[3]
+                period_shift = col_list[5]
+                if period_shift[0] == 'p':
+                    period_shift = int(period_shift[1:])
+                else:
+                    period_shift = -int(period_shift[1:])
+
+            if period_shift:
+                period_column = 'period_' + ('m{}'.format(-period_shift) if period_shift < 0
+                                             else 'p{}'.format(period_shift))
+            else:
+                period_column = 'period'
+
+            data_str_a = dataset_grouped_values.loc[(dataset_grouped_values['indicator'] == ind)
+                                                    & (dataset_grouped_values['analytics'] == an)]
+
+            if period_column != 'period':
+                data_str_a = data_str_a.rename({'period': period_column}, axis=1)
+
+            data_str_a = data_str_a[['organisation', 'scenario', period_column, 'value']]
+
+            data_pr = data_pr.merge(data_str_a, on=['organisation', 'scenario', period_column], how='left')
+
+            data_pr = data_pr.rename({'value': column}, axis=1)
+
+        # for ind_line in indicators:
+        #     period_shift = ind_line.get('period_shift') or 0
+        #     if period_shift:
+        #         period_column = 'period_' + ('m{}'.format(-period_shift) if period_shift < 0
+        #                                      else 'p{}'.format(period_shift))
+        #     else:
+        #         period_column = 'period'
+        #
+        #     with_analytics = ind_line.get('use_analytics')
+        #
+        #     data_str = dataset_grouped_values.loc[(dataset_grouped_values['indicator'] == ind_line['short_id'])]
+        #     if with_analytics:
+        #         c_analytics = list(data_str['analytics'].unique())
+        #         if '' in c_analytics:
+        #             c_analytics.pop(c_analytics.index(''))
+        #     else:
+        #         c_analytics = ['']
+        #
+        #     for an_el in c_analytics:
+        #
+        #         data_str_a = data_str.loc[(data_str['analytics'] == an_el)]
+        #
+        #         data_str_a = data_str_a.groupby(['organisation', 'scenario', 'period'], as_index=False).sum()
+        #         if period_column != 'period':
+        #             data_str_a = data_str_a.rename({'period': period_column}, axis=1)
+        #
+        #         data_str_a = data_str_a[['organisation', 'scenario', period_column, 'value']]
+        #
+        #         data_pr = data_pr.merge(data_str_a, on=['organisation', 'scenario', period_column], how='left')
+        #
+        #         column_name = 'ind_{}'.format(ind_line['short_id'])
+        #
+        #         if with_analytics:
+        #             column_name = '{}_an_{}'.format(column_name, an_el)
+        #
+        #         if period_shift:
+        #             column_name = '{}_p_'.format(column_name) + ('m{}'.format(-period_shift) if period_shift < 0
+        #                                                          else 'p{}'.format(period_shift))
+        #
+        #         data_pr = data_pr.rename({'value': column_name}, axis=1)
 
         data_pr = self._add_month_year_to_data(data_pr)
         return data_pr
