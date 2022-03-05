@@ -119,7 +119,7 @@ class ModelProcessor:
 
         self.model = self._get_model(model_description)
 
-        result, graph_bin = self.model.get_feature_importances(parameters.get('get_graph'))
+        result, graph_bin = self.model.get_feature_importances(parameters.get('get_graph'), parameters.get('extended'))
 
         return result, graph_bin
 
@@ -264,10 +264,21 @@ class BaseModel:
 
         return fi
 
-    def get_feature_importances(self, get_graph=False):
+    def get_feature_importances(self, get_graph=False, extended=False):
         fi = self._data_processor.read_feature_importances(self.model_id)
         if not fi:
             raise ProcessorException('Feature importances is not calculated')
+
+        if not extended:
+            fi_pd = pd.DataFrame(fi)
+            fi_pd['count'] = 1
+
+            fi_pd = fi_pd.groupby(['indicator_name', 'report_type', 'indicator_id'], as_index=False).sum()
+            fi_pd['feature_importance'] = fi_pd['feature_importance']/fi_pd['count']
+
+            fi_pd = fi_pd.sort_values(by='feature_importance', ascending=False)
+            fi = fi_pd.to_dict('records')
+
         graph_bin = None
         if get_graph:
             graph_bin = self._get_fi_graph_bin(fi)
@@ -548,7 +559,14 @@ class NeuralNetworkModel(BaseModel):
 
     def calculate_feature_importances(self, date_from=None, epochs=1000, retrofit=False, validation_split=0.2):
 
-        data = self._data_processor.read_raw_data(self.x_indicators + self.y_indicators, date_from)
+        if not retrofit:
+            date_from = None
+        else:
+            date_from = datetime.datetime.strptime(date_from, '%d.%m.%Y')
+
+        indicator_filter = [ind_data['id'] for ind_data in self.x_indicators + self.y_indicators]
+
+        data = self._data_processor.read_raw_data(indicator_filter, date_from)
         additional_data = {'x_indicators': self.x_indicators,
                            'y_indicators': self.y_indicators,
                            'periods': self.periods,
@@ -559,7 +577,7 @@ class NeuralNetworkModel(BaseModel):
         x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data)
 
         self._temp_input = x
-        self._inner_model = self._get_inner_model(len(self.x_columns), len(self.y_columns), retrofit=retrofit)
+        # self._inner_model = self._get_inner_model(len(self.x_columns), len(self.y_columns), retrofit=retrofit)
 
         epochs = epochs or 1000
         validation_split = validation_split or 0.2
@@ -580,8 +598,14 @@ class NeuralNetworkModel(BaseModel):
         fi = pd.DataFrame(perm.feature_importances_, columns=['feature_importance'])
         fi['feature'] = x_columns
         fi = fi.sort_values(by='feature_importance', ascending=False)
-        fi['indicator'] = fi['feature'].apply(self._data_processor.get_indicator_name)
-        fi['report_type'] = fi['feature'].apply(self._data_processor.get_indicator_report_type)
+        fi[['indicator_name', 'report_type',
+            'indicator_id']] = fi[['feature']].apply(self._data_processor.get_indicator_data_from_fi,
+                                                     axis=1,
+                                                     result_type='expand')
+        fi[['analytics_name', 'analytics_type',
+            'analytics_id']] = fi[['feature']].apply(self._data_processor.get_analytics_data_from_fi,
+                                                     axis=1,
+                                                     result_type='expand')
 
         fi = fi.to_dict('records')
         self._data_processor.write_feature_importances(self.model_id, fi)
@@ -613,9 +637,9 @@ class NeuralNetworkModel(BaseModel):
         return inner_model
 
     def _get_model_for_feature_importances(self):
-        model_copy = clone_model(self._inner_model) # self._create_inner_model(len(self.x_columns), len(self.y_columns))
-        model_copy.layers[0].adapt(self._temp_input)
-        model_copy.compile(optimizer=optimizers.Adam(learning_rate=0.01), loss='MeanSquaredError',
+        # model_copy = clone_model(self._inner_model) #
+        model_copy = self._create_inner_model(len(self.x_columns), len(self.y_columns))
+        model_copy.compile(optimizer=optimizers.Adam(learning_rate=0.001), loss='MeanSquaredError',
                            metrics=['RootMeanSquaredError'])
         return model_copy
 
@@ -847,12 +871,32 @@ class DataProcessor:
 
         return result
 
-    def get_indicator_name(self, indicator_id):
-        indicator_id = indicator_id.replace('_value', '')
-        result = None
-        indicator_line = self._db_connector.read_indicator_from_id(indicator_id)
+    def get_indicator_data_from_fi(self, column_name):
+
+        short_id = column_name['feature'].split('_')[1]
+
+        result = '', '', ''
+        indicator_line = self._db_connector.read_indicator_from_short_id(short_id)
         if indicator_line:
-            result = indicator_line['indicator']
+            result = indicator_line['name'], indicator_line['report_type'], indicator_line['id']
+
+        return result
+
+    def get_analytics_data_from_fi(self, column_name):
+
+        column_list = column_name['feature'].split('_')
+
+        short_id = ''
+        if len(column_list) == 4:
+            if column_list[2] == 'an':
+                short_id = column_list[3]
+        elif len(column_list) == 6:
+            short_id = column_list[3]
+
+        result = '', '', ''
+        analytics_line = self._db_connector.read_analytics_from_short_id(short_id)
+        if analytics_line:
+            result = analytics_line['name'], analytics_line['type'], analytics_line['id']
 
         return result
 

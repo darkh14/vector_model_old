@@ -71,6 +71,20 @@ class Connector:
 
         return result
 
+    def read_indicator_from_short_id(self, indicator_id):
+        result = self._read_line('indicators', {'short_id': indicator_id})
+        if result:
+            result.pop('_id')
+
+        return result
+
+    def read_analytics_from_short_id(self, analytics_id):
+        result = self._read_line('analytics', {'short_id': analytics_id})
+        if result:
+            result.pop('_id')
+
+        return result
+
     def read_indicator_from_name_type(self, indicator, report_type):
         result = self._read_line('indicators', {'indicator': indicator, 'report_type': report_type})
         if result:
