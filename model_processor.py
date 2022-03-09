@@ -150,7 +150,7 @@ class ModelProcessor:
         if not inputs:
             raise ProcessorException('inputs is not in parameters')
 
-        result = self.model.get_factor_analysis_data(inputs)
+        result = self.model.get_factor_analysis_data(inputs, parameters.get('step'))
 
         return result
 
@@ -316,7 +316,7 @@ class BaseModel:
         return rsme, mspe
 
     @abstractmethod
-    def get_factor_analysis_data(self, inputs):
+    def get_factor_analysis_data(self, inputs, step=0.3):
         """method for getting factor analysis data"""
 
     def _get_scaler(self, retrofit=False, is_out=False):
@@ -697,6 +697,13 @@ class NeuralNetworkModel(BaseModel):
             if indicator_data['period_shift']:
                 continue
 
+            y_minus = None
+            y_plus = None
+
+            data_minus = None
+            data_zero = None
+            data_plus = None
+
             for step in (-step, 0, step):
                 cur_data = data.copy()
                 if step:
@@ -712,14 +719,30 @@ class NeuralNetworkModel(BaseModel):
 
                 x = x_y_pd.drop(columns_to_drop, axis=1).to_numpy()
                 cur_data = x_y_pd.copy()
-                if step:
-
-                    y = inner_model.predict(x)
-                    cur_data[self.y_columns] = y
 
                 cur_data = cur_data.drop(self.x_columns, axis=1)
 
-                output.append({'indicator_id': indicator_data['id'], 'step': step, 'data': cur_data.to_dict('records')})
+                if step == 0:
+                    data_zero = cur_data.copy()
+                else:
+                    y = inner_model.predict(x)
+                    cur_data[self.y_columns] = y
+                    if step > 0:
+                        y_plus = y
+                        data_plus = cur_data.copy()
+                    else:
+                        y_minus = y
+                        data_minus = cur_data.copy()
+            delta = abs(y_plus - y_minus)
+            delta = delta.flatten()
+            delta = sum(delta)/len(delta) if len(delta) else 0
+
+            output.append({'indicator_id': indicator_data['id'], 'data_minus': data_minus.to_dict('records'),
+                           'data_zero': data_minus.to_dict('data_zero'),
+                           'data_plus': data_plus.to_dict('data_zero'),
+                           'delta': delta})
+
+        output.sort(key=lambda k: k['delta'], reverse=True)
 
         return output, indicators_description
 
@@ -887,7 +910,7 @@ class LinearModel(BaseModel):
 
         return model
 
-    def get_factor_analysis_data(self, inputs):
+    def get_factor_analysis_data(self, inputs, step=0.3):
         return None
 
 
