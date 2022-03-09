@@ -694,6 +694,9 @@ class NeuralNetworkModel(BaseModel):
 
         for indicator_data in self.x_indicators:
 
+            if indicator_data['period_shift']:
+                continue
+
             for step in (-step, 0, step):
                 cur_data = data.copy()
                 if step:
