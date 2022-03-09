@@ -740,8 +740,8 @@ class NeuralNetworkModel(BaseModel):
             delta = sum(delta)/len(delta) if len(delta) else 0
 
             output.append({'indicator_id': indicator_data['id'], 'data_minus': data_minus.to_dict('records'),
-                           'data_zero': data_minus.to_dict('data_zero'),
-                           'data_plus': data_plus.to_dict('data_zero'),
+                           'data_zero': data_minus.to_dict('records'),
+                           'data_plus': data_plus.to_dict('records'),
                            'delta': delta})
 
         output.sort(key=lambda k: k['delta'], reverse=True)
