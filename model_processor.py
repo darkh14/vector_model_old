@@ -692,6 +692,8 @@ class NeuralNetworkModel(BaseModel):
 
         inner_model = self._get_inner_model(retrofit=True)
 
+        step = step or 0.3
+
         for indicator_data in self.x_indicators:
 
             if indicator_data['period_shift']:
