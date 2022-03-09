@@ -110,6 +110,7 @@ class Processor:
         result['model_calculate_feature_importances'] = model_processor.calculate_feature_importances
         result['model_get_feature_importances'] = model_processor.get_feature_importances
         result['model_get_rsme'] = model_processor.get_rsme
+        result['model_get_factor_analysis_data'] = model_processor.get_factor_analysis_data
         result['job_get_state'] = job_processor.job_get_state
         result['job_delete'] = job_processor.job_delete
 

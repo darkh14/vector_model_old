@@ -136,6 +136,24 @@ class ModelProcessor:
 
         return rsme, mspe
 
+    def get_factor_analysis_data(self, parameters):
+
+        model_description = parameters.get('model')
+
+        if not model_description:
+            raise ProcessorException('model is not in parameters')
+
+        self.model = self._get_model(model_description)
+
+        inputs = parameters.get('inputs')
+
+        if not inputs:
+            raise ProcessorException('inputs is not in parameters')
+
+        result = self.model.get_factor_analysis_data(inputs)
+
+        return result
+
     @staticmethod
     def _get_model(model_description):
 
@@ -296,6 +314,10 @@ class BaseModel:
             raise ProcessorException('MSPE is not calculated')
 
         return rsme, mspe
+
+    @abstractmethod
+    def get_factor_analysis_data(self, inputs):
+        """method for getting factor analysis data"""
 
     def _get_scaler(self, retrofit=False, is_out=False):
 
@@ -643,6 +665,61 @@ class NeuralNetworkModel(BaseModel):
                            metrics=['RootMeanSquaredError'])
         return model_copy
 
+    def get_factor_analysis_data(self, inputs, step=0.3):
+
+        data = pd.DataFrame(inputs)
+
+        additional_data = {'x_indicators': self.x_indicators,
+                           'y_indicators': self.y_indicators,
+                           'periods': self.periods,
+                           'organisations': self.organisations,
+                           'scenarios': self.scenarios,
+                           'x_columns': self.x_columns + self.y_columns,
+                           'y_columns': self.y_columns}
+
+        output = list()
+        indicators_description = self.x_indicators + self.y_indicators
+
+        period_columns = list()
+        for indicator_data in self.x_indicators:
+            if indicator_data['period_shift']:
+                column_name = 'period_{}{}'.format('m' if indicator_data['period_shift'] < 0 else 'p',
+                                                   -indicator_data['period_shift'] if indicator_data['period_shift'] < 0
+                                                   else indicator_data['period_shift'])
+
+                if column_name not in period_columns:
+                    period_columns.append(column_name)
+
+        inner_model = self._get_inner_model(retrofit=True)
+
+        for indicator_data in self.x_indicators:
+
+            for step in (-step, 0, step):
+                cur_data = data.copy()
+                if step:
+                    cur_data_ind = cur_data.loc[cur_data['indicator_id']==indicator_data['id']].copy()
+                    cur_data_ind['value'] = cur_data_ind['value']*(1 + step)
+                    cur_data.loc[cur_data['indicator_id'] == indicator_data['id']] = cur_data_ind
+
+                encode_fields = None
+                x, x_y_pd = self._data_processor.get_x_for_prediction(cur_data, additional_data, encode_fields)
+
+                columns_to_drop = self.y_columns + ['organisation', 'scenario', 'period', 'periodicity', 'year',
+                                                    'month'] + period_columns
+
+                x = x_y_pd.drop(columns_to_drop, axis=1).to_numpy()
+                cur_data = x_y_pd.copy()
+                if step:
+
+                    y = inner_model.predict(x)
+                    cur_data[self.y_columns] = y
+
+                cur_data = cur_data.drop(self.x_columns, axis=1)
+
+                output.append({'indicator_id': indicator_data['id'], 'step': step, 'data': cur_data.to_dict('records')})
+
+        return output, indicators_description
+
     @staticmethod
     def _create_inner_model(inputs_number, outputs_number):
 
@@ -807,6 +884,9 @@ class LinearModel(BaseModel):
 
         return model
 
+    def get_factor_analysis_data(self, inputs):
+        return None
+
 
 class DataProcessor:
 
@@ -909,7 +989,7 @@ class DataProcessor:
 
         return result
 
-    def read_raw_data(self, indicators=None, date_from=None):
+    def read_raw_data(self, indicators=None, date_from=None, ad_filter=None):
         raw_data = self._db_connector.read_raw_data(indicators, date_from)
         return raw_data
 
@@ -1454,3 +1534,13 @@ def set_db_connector(parameters):
     global DB_CONNECTOR
     if not DB_CONNECTOR:
         DB_CONNECTOR = db_connector.Connector(parameters, initialize=True)
+
+
+def get_factor_analysis_data(parameters):
+
+    processor = ModelProcessor(parameters)
+    result = processor.get_factor_analysis_data(parameters)
+
+    result = dict(status='OK', error_text='', result=result, description='model factor analysis data recieved')
+
+    return result
