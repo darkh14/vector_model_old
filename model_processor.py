@@ -156,12 +156,12 @@ class ModelProcessor:
         if not output_indicator_id:
             raise ProcessorException('output indicator id is not in parameters')
 
-        result = self.model.get_factor_analysis_data(inputs,
+        result, indicator_description, graph_data = self.model.get_factor_analysis_data(inputs,
                                                      output_indicator_id,
                                                      step=parameters.get('step'),
                                                      get_graph=parameters.get('get_graph'))
 
-        return result
+        return result, indicator_description, graph_data
 
     @staticmethod
     def _get_model(model_description):
@@ -1104,7 +1104,7 @@ class LinearModel(BaseModel):
         return model
 
     def get_factor_analysis_data(self, inputs, output_indicator_id, step=0.3, get_graph=False):
-        return None
+        return None, None, None
 
 
 class DataProcessor:
@@ -1758,8 +1758,14 @@ def set_db_connector(parameters):
 def get_factor_analysis_data(parameters):
 
     processor = ModelProcessor(parameters)
-    result = processor.get_factor_analysis_data(parameters)
+    fa, indicator_description, graph_bin = processor.get_factor_analysis_data(parameters)
 
-    result = dict(status='OK', error_text='', result=result, description='model factor analysis data recieved')
+    get_graph = parameters.get('get_graph')
+
+    result = dict(status='OK', error_text='', result=fa, indicator_description=indicator_description,
+                  description='model factor analysis data recieved')
+
+    if get_graph:
+        result['graph_data'] = base64.b64encode(graph_bin).decode(encoding='utf-8')
 
     return result
