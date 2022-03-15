@@ -611,7 +611,7 @@ class BaseModel:
 
     def _get_fa_graph_bin(self, values):
 
-        self._make_fi_graph(values)
+        self._make_fa_graph(values)
 
         graph_bin = self._read_graph_file(graph_type='fa')
 
