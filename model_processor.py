@@ -1,12 +1,13 @@
 import settings_controller
 from logger import ProcessorException as ProcessorException
 import db_connector
-import numpy as np
 
+import numpy as np
 import pandas as pd
 import os
 import math
 from abc import ABCMeta, abstractmethod
+from functools import reduce
 
 from job_processor import JobProcessor
 
@@ -150,7 +151,15 @@ class ModelProcessor:
         if not inputs:
             raise ProcessorException('inputs is not in parameters')
 
-        result = self.model.get_factor_analysis_data(inputs, parameters.get('step'))
+        output_indicator_id = parameters.get('output_indicator_id')
+
+        if not output_indicator_id:
+            raise ProcessorException('output indicator id is not in parameters')
+
+        result = self.model.get_factor_analysis_data(inputs,
+                                                     output_indicator_id,
+                                                     step=parameters.get('step'),
+                                                     get_graph=parameters.get('get_graph'))
 
         return result
 
@@ -233,6 +242,7 @@ class BaseModel:
         self.need_to_update = not description_from_db or need_to_update
         self.graph_file_name = 'graph.png'
         self.graph_fi_file_name = 'fi_graph.png'
+        self.graph_fa_file_name = 'fa_graph.png'
 
     def update_model(self, data):
         if self.need_to_update:
@@ -316,7 +326,7 @@ class BaseModel:
         return rsme, mspe
 
     @abstractmethod
-    def get_factor_analysis_data(self, inputs, step=0.3):
+    def get_factor_analysis_data(self, inputs, output_indicator_id, step=0.3, get_graph=False):
         """method for getting factor analysis data"""
 
     def _get_scaler(self, retrofit=False, is_out=False):
@@ -377,9 +387,20 @@ class BaseModel:
         # plt.show()
         fig.savefig(self.graph_file_name)
 
-    def _read_graph_file(self, fi_graph=False):
+    def _read_graph_file(self, graph_type='main'):
 
-        f = open(self.graph_fi_file_name if fi_graph else self.graph_file_name, 'rb')
+        graph_file_name = ''
+        if graph_type == 'main':
+            graph_file_name = self.graph_file_name
+        elif graph_type == 'fi':
+            graph_file_name = self.graph_fi_file_name
+        elif graph_type == 'fa':
+            graph_file_name = self.graph_fa_file_name
+
+        if not graph_file_name:
+            raise ProcessorException('Graph type {} is not allowed'.format(graph_file_name))
+
+        f = open(graph_file_name, 'rb')
         result = f.read()
         f.close()
 
@@ -430,7 +451,7 @@ class BaseModel:
         indexes = list(range(1, len(values) + 1))
         self._make_fi_graph(values, indexes)
 
-        graph_bin = self._read_graph_file(fi_graph=True)
+        graph_bin = self._read_graph_file(graph_type='fi')
 
         return graph_bin
 
@@ -462,6 +483,139 @@ class BaseModel:
         y_p = np.max(y_p, axis=1).reshape(-1, 1)
 
         return np.sqrt(np.nanmean(np.square(((y_true - y_pred) / y_p))))
+
+    def _get_data_for_fa_graph(self, outputs, indicators_description, output_indicator_id):
+
+        result = outputs.copy()
+        result['count'] = 1
+        result_group = result.groupby(by=['indicator_id'], as_index=False).sum()
+
+        result_group = result_group.sort_values(by='abs_delta', ascending=False)
+
+        num_columns = list(result_group.columns)
+        num_columns = [col for col in num_columns if col not in ['indicator_id', 'count']]
+
+        for col in num_columns:
+            result_group[col] = result_group[col]/result_group['count']
+
+        out_line = result_group.iloc[[0]].copy()
+        out_line['indicator_id'] = output_indicator_id
+        out_line['in_value_minus'] = 0
+        out_line['in_value_0'] = 0
+        out_line['in_value_plus'] = 0
+        out_line['out_value_minus'] = result_group.iloc[0]['out_value_0']
+        out_line['out_value_0'] = result_group.iloc[0]['out_value_0']
+        out_line['out_value_plus'] = result_group.iloc[0]['out_value_0']
+        out_line['abs_delta'] = 0
+
+        result_group = pd.concat([out_line, result_group], axis=0)
+
+        result_group['indicator'] = result_group['indicator_id'].apply(self._get_indicator_name_from_description)
+
+        result_group['abs_delta'] = abs(result_group['out_value_plus'] - result_group['out_value_0'])
+        result_group['increase'] = result_group[['out_value_plus', 'out_value_0']].apply(
+            lambda x: x[0] - x[1] if x[0] - x[1] > 0 else 0, axis=1)
+        result_group['decrease'] = result_group[['out_value_plus', 'out_value_0']].apply(
+            lambda x: x[1] - x[0] if x[0] - x[1] < 0 else 0, axis=1)
+
+        result_group['current_percent'] = result_group[['out_value_0', 'abs_delta']].apply(
+             lambda dd: 100 * (dd[0] - dd[1]) / dd[0] if dd[0] else 0, axis=1)
+        result_group['delta_percent_min'] = result_group[['out_value_0', 'decrease']].apply(
+             lambda dd: 100 * dd[1] / dd[0] if dd[0] else 0, axis=1)
+        result_group['delta_percent_max'] = result_group[['out_value_0', 'increase']].apply(
+            lambda dd: 100 * dd[1] / dd[0] if dd[0] else 0, axis=1)
+
+        return result_group
+
+    def _get_indicator_name_from_description(self, indicator_id):
+        descr_lines = list(filter(lambda x: x['id'] == indicator_id, self.x_indicators + self.y_indicators))
+        return descr_lines[0]['name']
+
+    def _make_fa_graph(self, values):
+
+        x = values['indicator_id']
+
+        y1 = values['current_percent'].to_numpy()
+        y2 = values['delta_percent_min'].to_numpy()
+        y3 = values['delta_percent_max'].to_numpy()
+
+        y = values['out_value_0'].to_numpy()
+        y_delta = values['abs_delta'].to_numpy()
+
+        fig, ax = plt.subplots()
+
+        ax.bar(x, y1, width=0.8, label='Текущее значение')
+        ax.bar(x, y2, width=0.8, bottom=y1, label='Снижение')
+        ax.bar(x, y3, width=0.8, bottom=y1, label='Рост')
+
+        # ax.set_xlabel(list(values['indicator']))
+
+        ax.set_facecolor('seashell')
+        fig.set_facecolor('floralwhite')
+        fig.set_figwidth(20)  # ширина Figure
+        fig.set_figheight(10)  # высота Figure
+
+        ax.set_ylabel('%')
+
+        ax.set_xticks(list(values['indicator_id']))
+        ind_list = [el.replace(' ', '\n') for el in list(values['indicator'])]
+        ax.set_xticklabels(ind_list)
+
+        ax.set_title('Факторный анализ')
+
+        ax.set_ylim([0, 110])
+        ax.set_xlim([-0.5, len(x) + 1])
+
+        ax.legend(loc=(0.87, 0.5))
+
+        bar_ind = 0
+        patch_ind = 0
+
+        spacing = 0
+
+        for rect in ax.patches:
+            # Get X and Y placement of label from rect.
+            if (patch_ind or rect.get_height()) and rect.get_y():
+                label = 0
+                if bar_ind == 0:
+                    label = y[patch_ind]
+                else:
+                    label = y_delta[patch_ind]
+
+                y_value = rect.get_y() + rect.get_height() / 2
+                x_value = rect.get_x() + rect.get_width() / 2
+
+                # Number of points between bar and label. Change to your liking.
+                space = spacing
+                # Vertical alignment for positive values
+                va = 'bottom'
+
+                # Use Y value as label and format number with one decimal place
+                label = "{:.0f}".format(label)
+
+                # Create annotation
+                ax.annotate(
+                    label,  # Use `label` as label
+                    (x_value, y_value),  # Place label at end of the bar
+                    xytext=(0, space),  # Vertically shift label by `space`
+                    textcoords="offset points",  # Interpret `xytext` as offset in points
+                    ha='center',  # Horizontally center label
+                    va=va)  # Vertically align label differently for
+                # positive and negative values.
+            patch_ind += 1
+            if not patch_ind % len(x):
+                patch_ind = 0
+                bar_ind += 1
+
+        fig.savefig(self.graph_fa_file_name)
+
+    def _get_fa_graph_bin(self, values):
+
+        self._make_fi_graph(values)
+
+        graph_bin = self._read_graph_file(graph_type='fa')
+
+        return graph_bin
 
 
 class NeuralNetworkModel(BaseModel):
@@ -665,7 +819,7 @@ class NeuralNetworkModel(BaseModel):
                            metrics=['RootMeanSquaredError'])
         return model_copy
 
-    def get_factor_analysis_data(self, inputs, step=0.3):
+    def get_factor_analysis_data(self, inputs, output_indicator_id, step=0.3, get_graph=False):
 
         data = pd.DataFrame(inputs)
 
@@ -694,60 +848,96 @@ class NeuralNetworkModel(BaseModel):
 
         step = step or 0.3
 
+        output_col_list = list(filter(lambda dt: dt['id'] == output_indicator_id, self.y_indicators))
+
+        if not output_col_list:
+            raise ProcessorException('Output indicator id not in model')
+
+        output_column_name = 'ind_' + output_col_list[0]['short_id']
+
+        result = pd.DataFrame()
+
         for indicator_data in self.x_indicators:
 
             if indicator_data['period_shift']:
                 continue
 
-            y_minus = None
-            y_plus = None
-
-            data_minus = None
-            data_zero = None
-            data_plus = None
+            cur_data = pd.DataFrame()
 
             for step in (-step, 0, step):
-                cur_data = data.copy()
+
+                raw_cur_data = data.copy()
+
                 if step:
-                    cur_data_ind = cur_data.loc[cur_data['indicator_id']==indicator_data['id']].copy()
+                    cur_data_ind = raw_cur_data.loc[raw_cur_data['indicator_id']==indicator_data['id']].copy()
                     cur_data_ind['value'] = cur_data_ind['value']*(1 + step)
-                    cur_data.loc[cur_data['indicator_id'] == indicator_data['id']] = cur_data_ind
+                    raw_cur_data.loc[raw_cur_data['indicator_id'] == indicator_data['id']] = cur_data_ind
 
                 encode_fields = None
-                x, x_y_pd = self._data_processor.get_x_for_prediction(cur_data, additional_data, encode_fields)
+                x, x_y_pd = self._data_processor.get_x_for_prediction(raw_cur_data, additional_data, encode_fields)
 
                 columns_to_drop = self.y_columns + ['organisation', 'scenario', 'period', 'periodicity', 'year',
                                                     'month'] + period_columns
 
                 x = x_y_pd.drop(columns_to_drop, axis=1).to_numpy()
-                cur_data = x_y_pd.copy()
 
-                cur_data = cur_data.drop(self.x_columns, axis=1)
+                y = inner_model.predict(x)
 
-                if step == 0:
-                    data_zero = cur_data.copy()
+                y_pd = pd.DataFrame(y, columns=self.y_columns)
+                y = y_pd[[output_column_name]].to_numpy()
+
+                x_y_pd[output_column_name] = y
+
+                input_indicator_columns = list()
+                if indicator_data['use_analytics']:
+                    for col_name in self.x_columns:
+                        col_list = col_name.split('_')
+                        if col_list[1] == indicator_data['short_id'] and len(col_list) == 4:
+                            input_indicator_columns.append(col_name)
                 else:
-                    y = inner_model.predict(x)
-                    cur_data[self.y_columns] = y
-                    if step > 0:
-                        y_plus = y
-                        data_plus = cur_data.copy()
-                    else:
-                        y_minus = y
-                        data_minus = cur_data.copy()
-            delta = abs(y_plus - y_minus)
-            delta = delta.flatten()
-            delta = sum(delta)/len(delta) if len(delta) else 0
+                    input_indicator_columns.append('ind_' + indicator_data['short_id'])
 
-            output.append({'indicator_id': indicator_data['id'], 'data_minus': data_minus.to_dict('records'),
-                           'data_zero': data_zero.to_dict('records'),
-                           'data_plus': data_plus.to_dict('records'),
-                           'delta': delta,
-                           'step': step})
+                if step < 0:
+                    in_value_name = 'in_value_minus'
+                    out_value_name = 'out_value_minus'
+                elif step > 0:
+                    in_value_name = 'in_value_plus'
+                    out_value_name = 'out_value_plus'
+                else:
+                    in_value_name = 'in_value_0'
+                    out_value_name = 'out_value_0'
 
-        output.sort(key=lambda k: k['delta'], reverse=True)
+                if not len(cur_data):
+                    cur_data = x_y_pd.copy()
+                    cur_data['indicator_id'] = indicator_data['id']
+                    columns_to_drop = ['organisation', 'scenario', 'periodicity', 'year',
+                                       'month'] + period_columns + self.x_columns + self.y_columns
+                    cur_data = cur_data.drop(columns_to_drop, axis=1)
 
-        return output, indicators_description
+                cur_data[out_value_name] = x_y_pd[output_column_name]
+                cur_data[in_value_name] = x_y_pd[input_indicator_columns].apply(sum, axis=1)
+
+            cur_data['abs_delta'] = abs(cur_data['out_value_plus'] - cur_data['out_value_minus'])
+
+            max_delta = sum(cur_data['abs_delta'])
+            cur_data['max_delta'] = max_delta
+
+            if not len(result):
+                result = cur_data
+            else:
+                result = pd.concat([result, cur_data], axis=0)
+
+        result = result.sort_values(by='max_delta', ascending=False)
+
+        result = result.drop(['max_delta'], axis=1)
+        output = result.to_dict(orient='records')
+
+        graph_bin = None
+        if get_graph:
+            graph_data = self._get_data_for_fa_graph(result, indicators_description, output_indicator_id)
+            graph_bin = self._get_fa_graph_bin(graph_data)
+
+        return output, indicators_description, graph_bin
 
     @staticmethod
     def _create_inner_model(inputs_number, outputs_number):
@@ -913,7 +1103,7 @@ class LinearModel(BaseModel):
 
         return model
 
-    def get_factor_analysis_data(self, inputs, step=0.3):
+    def get_factor_analysis_data(self, inputs, output_indicator_id, step=0.3, get_graph=False):
         return None
 
 
