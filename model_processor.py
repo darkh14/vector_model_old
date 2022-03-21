@@ -575,7 +575,7 @@ class BaseModel:
 
         for rect in ax.patches:
             # Get X and Y placement of label from rect.
-            if (patch_ind or rect.get_height()) and rect.get_y():
+            if rect.get_height() and rect.get_y():
                 label = 0
                 if bar_ind == 0:
                     label = y[patch_ind]
