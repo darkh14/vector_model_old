@@ -523,9 +523,9 @@ class BaseModel:
                                                                         'indicator_id'], as_index=False).sum()
 
         print()
-        print(indicator_descr)
+        print(dataset[['indicator', 'indicator_id']])
         print()
-        
+
         indicators = list(indicator_descr['indicator'].values)
 
         ind_list = [el.replace(' ', '\n') for el in indicators]
