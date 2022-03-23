@@ -802,7 +802,6 @@ class NeuralNetworkModel(BaseModel):
                            'x_columns': self.x_columns + self.y_columns,
                            'y_columns': self.y_columns}
 
-        output = list()
         indicators_description = self.x_indicators + self.y_indicators
 
         period_columns = list()
