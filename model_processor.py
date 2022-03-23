@@ -522,7 +522,9 @@ class BaseModel:
         indicator_descr = dataset[['indicator', 'indicator_id']].groupby(['indicator',
                                                                         'indicator_id'], as_index=False).sum()
         indicators = list(indicator_descr['indicator'].values)
+        print()
         print(indicators)
+        print()
         ind_list = [el.replace(' ', '\n') for el in indicators]
 
         x0 = dataset['indicator_id'].unique()
