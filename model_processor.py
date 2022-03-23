@@ -484,46 +484,44 @@ class BaseModel:
 
         return np.sqrt(np.nanmean(np.square(((y_true - y_pred) / y_p))))
 
-    def _get_data_for_fa_graph(self, outputs, indicators_description, output_indicator_id):
+    def _get_data_for_fa_graph(self, outputs, indicators_description, output_indicator_id, steps):
 
         result = outputs.copy()
         result['count'] = 1
-        result_group = result.groupby(by=['indicator_id'], as_index=False).sum()
+        result_group = result.groupby(by=['indicator_id', 'koef'], as_index=False).sum()
 
-        result_group = result_group.sort_values(by='abs_delta', ascending=False)
+        result_group['reverse_delta'] = -result_group['max_delta']
+        result_group = result_group.sort_values(by=['reverse_delta', 'koef'])
 
         num_columns = list(result_group.columns)
-        num_columns = [col for col in num_columns if col not in ['indicator_id', 'count']]
+        num_columns = [col for col in num_columns if col not in ['indicator_id', 'koef', 'count']]
 
         for col in num_columns:
             result_group[col] = result_group[col]/result_group['count']
 
-        out_line = result_group.iloc[[0]].copy()
-        out_line['indicator_id'] = output_indicator_id
-        out_line['in_value_minus'] = 0
-        out_line['in_value_0'] = 0
-        out_line['in_value_plus'] = 0
-        out_line['out_value_minus'] = result_group.iloc[0]['out_value_0']
-        out_line['out_value_0'] = result_group.iloc[0]['out_value_0']
-        out_line['out_value_plus'] = result_group.iloc[0]['out_value_0']
-        out_line['abs_delta'] = 0
+        result_null = result_group.loc[result_group['koef'] == 0]
+        result_null = result_null[['indicator_id', 'out_value']]
+        result_null = result_null.rename({'out_value': 'out_value_null'}, axis=1)
 
-        result_group = pd.concat([out_line, result_group], axis=0)
+        result_group = result_group.merge(result_null, on=['indicator_id'], how='left')
+        result_group = result_group.drop(['count', 'reverse_delta'], axis=1)
+
+        result_group['value_percent'] = result_group[['out_value', 'out_value_null']].apply(lambda x:
+                                                                        100*x[0]/x[1] if x[1] else 0, axis=1)
+
+        # out_line = result_group.iloc[[0]].copy()
+        # out_line['indicator_id'] = output_indicator_id
+        # out_line['in_value_minus'] = 0
+        # out_line['in_value_0'] = 0
+        # out_line['in_value_plus'] = 0
+        # out_line['out_value_minus'] = result_group.iloc[0]['out_value_0']
+        # out_line['out_value_0'] = result_group.iloc[0]['out_value_0']
+        # out_line['out_value_plus'] = result_group.iloc[0]['out_value_0']
+        # out_line['abs_delta'] = 0
+        #
+        # result_group = pd.concat([out_line, result_group], axis=0)
 
         result_group['indicator'] = result_group['indicator_id'].apply(self._get_indicator_name_from_description)
-
-        result_group['abs_delta'] = abs(result_group['out_value_plus'] - result_group['out_value_0'])
-        result_group['increase'] = result_group[['out_value_plus', 'out_value_0']].apply(
-            lambda x: x[0] - x[1] if x[0] - x[1] > 0 else 0, axis=1)
-        result_group['decrease'] = result_group[['out_value_plus', 'out_value_0']].apply(
-            lambda x: x[1] - x[0] if x[0] - x[1] < 0 else 0, axis=1)
-
-        result_group['current_percent'] = result_group[['out_value_0', 'abs_delta']].apply(
-             lambda dd: 100 * (dd[0] - dd[1]) / dd[0] if dd[0] else 0, axis=1)
-        result_group['delta_percent_min'] = result_group[['out_value_0', 'decrease']].apply(
-             lambda dd: 100 * dd[1] / dd[0] if dd[0] else 0, axis=1)
-        result_group['delta_percent_max'] = result_group[['out_value_0', 'increase']].apply(
-            lambda dd: 100 * dd[1] / dd[0] if dd[0] else 0, axis=1)
 
         return result_group
 
@@ -531,87 +529,69 @@ class BaseModel:
         descr_lines = list(filter(lambda x: x['id'] == indicator_id, self.x_indicators + self.y_indicators))
         return descr_lines[0]['name']
 
-    def _make_fa_graph(self, values):
+    def _make_fa_graph(self, dataset, steps):
 
-        x = values['indicator_id']
+        indicator_descr = dataset[['indicator', 'indicator_id']].groupby(['indicator',
+                                                                        'indicator_id'], as_index=False).sum()
+        indicators = list(indicator_descr['indicator'].values)
+        ind_list = [el.replace(' ', '\n') for el in indicators]
 
-        y1 = values['current_percent'].to_numpy()
-        y2 = values['delta_percent_min'].to_numpy()
-        y3 = values['delta_percent_max'].to_numpy()
-
-        y = values['out_value_0'].to_numpy()
-        y_delta = values['abs_delta'].to_numpy()
+        x0 = dataset['indicator_id'].unique()
 
         fig, ax = plt.subplots()
 
-        ax.bar(x, y1, width=0.8, label='Текущее значение')
-        ax.bar(x, y2, width=0.8, bottom=y1, label='Снижение')
-        ax.bar(x, y3, width=0.8, bottom=y1, label='Рост')
+        x_shifts = [(el-len(steps)/2)/7 for el in list(range(len(steps)))]
+        ind = 0
+        x_ticks_is_set = False
 
-        # ax.set_xlabel(list(values['indicator']))
+        for step in steps:
+            y = dataset.loc[dataset['koef'] == step]['value_percent'].to_numpy()
+            x = [(el + x_shifts[ind]) for el in list(range(len(x0)))]
+            ax.bar(x, y, width=1.5/len(x0), align='edge', label="{:.0f}".format(step*100) + ' %')
+            if ind > len(steps)/2 - 1 and not x_ticks_is_set:
+                ax.set_xticks(x)
+                x_ticks_is_set = True
+                ax.set_xticklabels(ind_list)
+            ind += 1
+
+        # ax.set_xlabel(indicators)
 
         ax.set_facecolor('seashell')
         fig.set_facecolor('floralwhite')
         fig.set_figwidth(20)  # ширина Figure
         fig.set_figheight(10)  # высота Figure
 
-        ax.set_ylabel('%')
-
-        ax.set_xticks(list(values['indicator_id']))
-        ind_list = [el.replace(' ', '\n') for el in list(values['indicator'])]
-        ax.set_xticklabels(ind_list)
+        ax.set_ylabel('Изменение выходного показателя, %')
 
         ax.set_title('Факторный анализ')
 
-        ax.set_ylim([0, 110])
-        ax.set_xlim([-0.5, len(x) + 1])
+        # ax.set_ylim([0, 110])
+        # ax.set_xlim([-0.5, len(x) + 1])
 
-        ax.legend(loc=(0.87, 0.5))
-
-        bar_ind = 0
-        patch_ind = 0
-
-        spacing = 0
+        ax.legend(loc=(1, 0.5), title='Изменение входных\n показателей, %')
 
         for rect in ax.patches:
-            # Get X and Y placement of label from rect.
-            if rect.get_height() and rect.get_y():
-                label = 0
-                if bar_ind == 0:
-                    label = y[patch_ind]
-                else:
-                    label = y_delta[patch_ind]
 
-                y_value = rect.get_y() + rect.get_height() / 2
-                x_value = rect.get_x() + rect.get_width() / 2
+            y_value = rect.get_y() + rect.get_height()
+            x_value = rect.get_x() + rect.get_width() / 2
 
-                # Number of points between bar and label. Change to your liking.
-                space = spacing
-                # Vertical alignment for positive values
-                va = 'bottom'
+            label = "{:.0f}".format(rect.get_height())
 
-                # Use Y value as label and format number with one decimal place
-                label = "{:.0f}".format(label)
-
-                # Create annotation
-                ax.annotate(
-                    label,  # Use `label` as label
-                    (x_value, y_value),  # Place label at end of the bar
-                    xytext=(0, space),  # Vertically shift label by `space`
-                    textcoords="offset points",  # Interpret `xytext` as offset in points
-                    ha='center',  # Horizontally center label
-                    va=va)  # Vertically align label differently for
-                # positive and negative values.
-            patch_ind += 1
-            if not patch_ind % len(x):
-                patch_ind = 0
-                bar_ind += 1
+            ax.annotate(
+                label,  # Use `label` as label
+                (x_value, y_value),  # Place label at end of the bar
+                xytext=(0, 0),  # Vertically shift label by `space`
+                textcoords="offset points",  # Interpret `xytext` as offset in points
+                ha='center',  # Horizontally center label
+                va='bottom',
+                fontsize=6)  # Vertically align label differently for
+            previous_label = rect.get_height()
 
         fig.savefig(self.graph_fa_file_name)
 
-    def _get_fa_graph_bin(self, values):
+    def _get_fa_graph_bin(self, values, steps):
 
-        self._make_fa_graph(values)
+        self._make_fa_graph(values, steps)
 
         graph_bin = self._read_graph_file(graph_type='fa')
 
@@ -857,6 +837,17 @@ class NeuralNetworkModel(BaseModel):
 
         result = pd.DataFrame()
 
+        multistep = False
+        if isinstance(step, list) or isinstance(step, tuple):
+            steps = step
+            if 0 not in steps:
+                steps.append(0)
+            multistep = True
+        else:
+            steps = [-step, 0, step]
+
+        steps.sort()
+
         for indicator_data in self.x_indicators:
 
             if indicator_data['period_shift']:
@@ -864,7 +855,7 @@ class NeuralNetworkModel(BaseModel):
 
             cur_data = pd.DataFrame()
 
-            for step in (-step, 0, step):
+            for step in steps:
 
                 raw_cur_data = data.copy()
 
@@ -897,16 +888,6 @@ class NeuralNetworkModel(BaseModel):
                 else:
                     input_indicator_columns.append('ind_' + indicator_data['short_id'])
 
-                if step < 0:
-                    in_value_name = 'in_value_minus'
-                    out_value_name = 'out_value_minus'
-                elif step > 0:
-                    in_value_name = 'in_value_plus'
-                    out_value_name = 'out_value_plus'
-                else:
-                    in_value_name = 'in_value_0'
-                    out_value_name = 'out_value_0'
-
                 if not len(cur_data):
                     cur_data = x_y_pd.copy()
                     cur_data['indicator_id'] = indicator_data['id']
@@ -914,28 +895,38 @@ class NeuralNetworkModel(BaseModel):
                                        'month'] + period_columns + self.x_columns + self.y_columns
                     cur_data = cur_data.drop(columns_to_drop, axis=1)
 
-                cur_data[out_value_name] = x_y_pd[output_column_name]
-                cur_data[in_value_name] = x_y_pd[input_indicator_columns].apply(sum, axis=1)
+                cur_data['koef'] = step
+                cur_data['out_value'] = x_y_pd[output_column_name]
+                cur_data['in_value'] = x_y_pd[input_indicator_columns].apply(sum, axis=1)
 
-            cur_data['abs_delta'] = abs(cur_data['out_value_plus'] - cur_data['out_value_minus'])
+                if not len(result):
+                    result = cur_data.copy()
+                else:
+                    result = pd.concat([result, cur_data], axis=0)
 
-            max_delta = sum(cur_data['abs_delta'])
-            cur_data['max_delta'] = max_delta
+        result_min = result.loc[result['koef'] == steps[0]].groupby('indicator_id', as_index=False).sum()
+        result_min = result_min.rename({'out_value': 'out_value_min'}, axis=1)
+        result_min = result_min.drop(['koef', 'in_value'], axis=1)
+        result_max = result.loc[result['koef'] == steps[-1]].groupby('indicator_id', as_index=False).sum()
+        result_max = result_max.rename({'out_value': 'out_value_max'}, axis=1)
+        result_max = result_max.drop(['koef', 'in_value'], axis=1)
 
-            if not len(result):
-                result = cur_data
-            else:
-                result = pd.concat([result, cur_data], axis=0)
+        result = result.merge(result_min, on=['indicator_id'], how='left')
+        result = result.merge(result_max, on=['indicator_id'], how='left')
+        result['max_delta'] = abs(result['out_value_max'] - result['out_value_min'])
 
         result = result.sort_values(by='max_delta', ascending=False)
 
-        result = result.drop(['max_delta'], axis=1)
-        output = result.to_dict(orient='records')
+        result = result.drop(['out_value_min'], axis=1)
+        result = result.drop(['out_value_max'], axis=1)
 
         graph_bin = None
         if get_graph:
-            graph_data = self._get_data_for_fa_graph(result, indicators_description, output_indicator_id)
-            graph_bin = self._get_fa_graph_bin(graph_data)
+            graph_data = self._get_data_for_fa_graph(result, indicators_description, output_indicator_id, steps)
+            graph_bin = self._get_fa_graph_bin(graph_data, steps)
+
+        result = result.drop(['max_delta'], axis=1)
+        output = result.to_dict(orient='records')
 
         return output, indicators_description, graph_bin
 
