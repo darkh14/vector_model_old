@@ -522,10 +522,6 @@ class BaseModel:
         indicator_descr = dataset[['indicator', 'indicator_id']].groupby(by=['indicator', 'indicator_id'],
                                                                          as_index=False).max()
 
-        print()
-        print(indicator_descr)
-        print()
-
         indicators = list(indicator_descr['indicator'].values)
 
         ind_list = [el.replace(' ', '\n') for el in indicators]
