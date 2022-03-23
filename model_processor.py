@@ -509,18 +509,6 @@ class BaseModel:
         result_group['value_percent'] = result_group[['out_value', 'out_value_null']].apply(lambda x:
                                                                         100*x[0]/x[1] if x[1] else 0, axis=1)
 
-        # out_line = result_group.iloc[[0]].copy()
-        # out_line['indicator_id'] = output_indicator_id
-        # out_line['in_value_minus'] = 0
-        # out_line['in_value_0'] = 0
-        # out_line['in_value_plus'] = 0
-        # out_line['out_value_minus'] = result_group.iloc[0]['out_value_0']
-        # out_line['out_value_0'] = result_group.iloc[0]['out_value_0']
-        # out_line['out_value_plus'] = result_group.iloc[0]['out_value_0']
-        # out_line['abs_delta'] = 0
-        #
-        # result_group = pd.concat([out_line, result_group], axis=0)
-
         result_group['indicator'] = result_group['indicator_id'].apply(self._get_indicator_name_from_description)
 
         return result_group
@@ -534,6 +522,7 @@ class BaseModel:
         indicator_descr = dataset[['indicator', 'indicator_id']].groupby(['indicator',
                                                                         'indicator_id'], as_index=False).sum()
         indicators = list(indicator_descr['indicator'].values)
+        print(indicators)
         ind_list = [el.replace(' ', '\n') for el in indicators]
 
         x0 = dataset['indicator_id'].unique()
