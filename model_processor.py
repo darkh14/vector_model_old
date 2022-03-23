@@ -520,10 +520,10 @@ class BaseModel:
     def _make_fa_graph(self, dataset, steps):
 
         indicator_descr = dataset[['indicator', 'indicator_id']].groupby(by=['indicator', 'indicator_id'],
-                                                                         as_index=False).sum()
+                                                                         as_index=False).max()
 
         print()
-        print(dataset[['indicator', 'indicator_id']])
+        print(indicator_descr)
         print()
 
         indicators = list(indicator_descr['indicator'].values)
