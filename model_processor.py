@@ -519,8 +519,8 @@ class BaseModel:
 
     def _make_fa_graph(self, dataset, steps):
 
-        indicator_descr = dataset[['indicator', 'indicator_id']].groupby(['indicator',
-                                                                        'indicator_id'], as_index=False).sum()
+        indicator_descr = dataset[['indicator', 'indicator_id']].groupby(by=['indicator', 'indicator_id'],
+                                                                         as_index=False).sum()
 
         print()
         print(dataset[['indicator', 'indicator_id']])
