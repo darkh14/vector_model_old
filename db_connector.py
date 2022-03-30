@@ -106,6 +106,10 @@ class Connector:
         return self._read_line('models', {'model_id': model_id})
 
     def write_model_description(self, model_description):
+        db_model_description = self.read_model_description(model_description['model_id'])
+        if db_model_description:
+            db_model_description.update(model_description)
+            model_description = db_model_description
         self._write_line('models', model_description, ['model_id'])
 
     def write_model_columns(self, model_id, x_columns, y_columns):

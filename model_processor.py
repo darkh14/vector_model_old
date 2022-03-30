@@ -7,7 +7,7 @@ import pandas as pd
 import os
 import math
 from abc import ABCMeta, abstractmethod
-from functools import reduce
+import json
 
 from job_processor import JobProcessor
 
@@ -16,6 +16,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
 from keras.wrappers.scikit_learn import KerasRegressor
 import eli5
+import tensorflow as tf
 from eli5.sklearn import PermutationImportance
 from tensorflow.keras.models import Sequential, clone_model
 from tensorflow.keras.layers import Dense
@@ -177,16 +178,15 @@ class ModelProcessor:
             model_class = NeuralNetworkModel
         elif model_type == 'linear_regression':
             model_class = LinearModel
+        elif model_type == 'periodic_neural_network':
+            model_class = PeriodicNeuralNetworkModel
 
         if not model_class:
             raise ProcessorException('model type "{}" is not supported'.format(model_type))
 
-        model = model_class(model_description['id'],
-                            model_description.get('name'),
-                            model_description.get('x_indicators'),
-                            model_description.get('y_indicators'),
-                            need_to_update=need_to_update,
-                            model_filter=model_description.get('filter'))
+        model_description['need_to_update'] = need_to_update
+
+        model = model_class(model_description['id'], model_description)
 
         return model
 
@@ -196,8 +196,14 @@ class BaseModel:
     __metaclass__ = ABCMeta
     type = ''
 
-    def __init__(self, model_id, name='', x_indicators=None, y_indicators=None, need_to_update=False,
-                 model_filter=None):
+    def __init__(self, model_id, model_parameters):
+
+        name = model_parameters.get('name') or ''
+        x_indicators = model_parameters.get('x_indicators')
+        y_indicators = model_parameters.get('y_indicators')
+        need_to_update = model_parameters.get('need_to_update')
+        model_filter = model_parameters.get('filter')
+
         self.model_id = model_id
         self._db_connector = DB_CONNECTOR
         self._data_processor = DataProcessor()
@@ -215,6 +221,7 @@ class BaseModel:
             self.x_columns = description_from_db['x_columns']
             self.y_columns = description_from_db['y_columns']
             self.feature_importances = description_from_db.get('feature_importances')
+            self.filter = description_from_db.get('filter')
         else:
             self.name = name
             self.filter = None
@@ -226,6 +233,7 @@ class BaseModel:
             self.x_columns = []
             self.y_columns = []
             self.feature_importances = []
+            self.filter = model_filter
 
         if x_indicators:
             self.x_indicators = self._data_processor.get_indicators_data_from_parameters(x_indicators)
@@ -233,11 +241,11 @@ class BaseModel:
         if y_indicators:
             self.y_indicators = self._data_processor.get_indicators_data_from_parameters(y_indicators)
 
-        if model_filter:
-            self.filter = model_filter
-
         self._inner_model = None
         self._retrofit = False
+
+        if model_filter:
+            self.filter = model_filter
 
         self.need_to_update = not description_from_db or need_to_update
         self.graph_file_name = 'graph.png'
@@ -263,7 +271,7 @@ class BaseModel:
                                  'y_columns': self.y_columns,
                                  'feature_importances': self.feature_importances}
 
-            self._data_processor.write_model_to_db(model_description)
+            self._data_processor.write_model_to_db(self.model_id, model_description)
             self.need_to_update = False
 
     @abstractmethod
@@ -934,6 +942,222 @@ class NeuralNetworkModel(BaseModel):
         return model
 
 
+class PeriodicNeuralNetworkModel(NeuralNetworkModel):
+
+    type = 'periodic_neural_network'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._data_processor = PeriodicDataProcessor()
+
+        model_parameters = args[1]
+        self.past_history = model_parameters.get('past_history')
+        self.future_target = model_parameters.get('future_target')
+
+    def update_model(self, data):
+        super().update_model(data)
+        model_description = {'past_history': self.past_history, 'future_target': self.future_target}
+        self._data_processor.write_model_to_db(self.model_id, model_description)
+
+    def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
+
+        if not retrofit:
+            date_from = None
+        else:
+            date_from = datetime.datetime.strptime(date_from, '%d.%m.%Y')
+
+        indicator_filter = [ind_data['id'] for ind_data in self.x_indicators + self.y_indicators]
+
+        data = self._data_processor.read_raw_data(indicator_filter, date_from=date_from)
+
+        if retrofit and self.need_to_update:
+            raise ProcessorException('Model can not be updated when retrofit')
+
+        self.update_model(data)
+
+        additional_data = {'x_indicators': self.x_indicators,
+                           'y_indicators': self.y_indicators,
+                           'periods': self.periods,
+                           'organisations': self.organisations,
+                           'scenarios': self.scenarios,
+                           'x_columns': self.x_columns,
+                           'y_columns': self.y_columns,
+                           'past_history': self.past_history,
+                           'future_target': self.future_target}
+
+        encode_fields = None
+        x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data, encode_fields,
+                                                                              self.filter)
+
+        # with open('x.json', 'w') as f:
+        #     json.dump(x.tolist(), f)
+        # with open('y.json', 'w') as f:
+        #     json.dump(y.tolist(), f)
+
+        self.x_columns = x_columns
+        self.y_columns = y_columns
+
+        disable_gpu()
+
+        BATCH_SIZE = 256
+        BUFFER_SIZE = 10000
+
+        x_y_data = tf.data.Dataset.from_tensor_slices((x, y))
+        x_y_data = x_y_data.cache().shuffle(BUFFER_SIZE).batch(BATCH_SIZE).repeat()
+
+        if not retrofit:
+            self._data_processor.write_columns(self.model_id, x_columns, y_columns)
+
+        inner_model = self._get_inner_model(x.shape[-2:], y.shape[-2], retrofit=retrofit)
+
+        self._epochs = epochs or 10
+        self._validation_split = validation_split or 0.2
+
+        inner_model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), loss='mae',
+                            metrics=['RootMeanSquaredError'])
+
+        history = inner_model.fit(x_y_data, epochs=self._epochs, steps_per_epoch=50, verbose=2)
+
+        self._inner_model = inner_model
+
+        y_pred = inner_model.predict(x)
+        y_pred = y_pred.reshape(y_pred.shape[0], y_pred.shape[1], len(self.y_columns))
+        rmse = np.sqrt(self._calculate_rsme(y, y_pred))
+        mspe = self._calculate_mspe(y, y_pred)
+        print("RMSE: {}".format(rmse))
+        print("MSPE: {}".format(mspe))
+
+        self._data_processor.write_model_field(self.model_id, 'rsme', rmse)
+        self._data_processor.write_model_field(self.model_id, 'mspe', mspe)
+
+        self._data_processor.write_inner_model(self.model_id, self._inner_model)
+
+        return history.history
+
+    def predict(self, inputs, get_graph=False, graph_data=None):
+
+        data = pd.DataFrame(inputs)
+        additional_data = {'x_indicators': self.x_indicators,
+                           'y_indicators': self.y_indicators,
+                           'periods': self.periods,
+                           'organisations': self.organisations,
+                           'scenarios': self.scenarios,
+                           'x_columns': self.x_columns,
+                           'y_columns': self.y_columns,
+                           'past_history': self.past_history,
+                           'future_target': self.future_target}
+
+        encode_fields = None
+        x, x_pd = self._data_processor.get_x_for_prediction(data, additional_data, encode_fields)
+
+        disable_gpu()
+
+        inner_model = self._get_inner_model(retrofit=True)
+
+        y = inner_model.predict(x)
+
+        y = y.flatten().tolist()
+
+        graph_bin = None
+
+        if get_graph:
+            graph_bin = self._get_graph_bin(y, graph_data)
+
+        indicators_description = self.x_indicators + self.y_indicators
+
+        return y, indicators_description, graph_bin
+
+    @staticmethod
+    def _create_inner_model(inputs_number=0, outputs_number=0):
+        multi_step_model = tf.keras.models.Sequential()
+        multi_step_model.add(tf.keras.layers.LSTM(300,
+                                                  return_sequences=True,
+                                                  input_shape=inputs_number,
+                                                  name='ltsm_1'))
+        multi_step_model.add(tf.keras.layers.LSTM(200, activation='relu', name='ltsm_2'))
+        multi_step_model.add(tf.keras.layers.Dense(outputs_number, name='dense_3'))
+
+        return multi_step_model
+
+    @staticmethod
+    def _calculate_rsme(y_true, y_pred):
+        return np.sqrt(np.nanmean(np.square(y_true**2 - y_pred**2)))
+
+    @staticmethod
+    def _calculate_mspe(y_true, y_pred):
+
+        eps = np.zeros(y_true.shape)
+        eps[:] = 0.0001
+        y_p = np.c_[abs(y_true), abs(y_pred), eps]
+        y_p = np.max(y_p, axis=2).reshape(y_p.shape[0], y_p.shape[1], 1)
+
+        return np.sqrt(np.nanmean(np.square(((y_true - y_pred) / y_p))))
+
+    def _get_graph_bin(self, data, graph_data):
+
+        x_pred, y_pred, x_val, y_val = self._get_dataframe_for_graph_periods(data, graph_data['validation_data'],
+                                                                 graph_data['periods'])
+
+        self._make_graph(x_pred, y_pred, x_val, y_val)
+
+        graph_bin = self._read_graph_file()
+
+        return graph_bin
+
+    @staticmethod
+    def _get_dataframe_for_graph_periods(y, y_val, periods):
+
+        if len(periods) != len(y):
+            raise ProcessorException('Number of periods ({}) not equal to number of predicted values ' +
+                                     '({})'.format(len(periods), len(y)))
+
+        pd_data = pd.DataFrame(periods, columns=['period'])
+        pd_data['y_pred'] = y
+
+        pd_data_val = pd.DataFrame(y_val)
+
+        pd_data = pd_data.merge(pd_data_val, on='period', how='left')
+        pd_data = pd_data.rename({'value': 'y_val'}, axis=1)
+        pd_data = pd_data.fillna('na')
+        data_pred = pd_data[['period', 'y_pred']]
+        data_val = pd_data.loc[pd_data['y_val'] != 'na']
+
+        return data_pred['period'].to_numpy(), data_pred['y_pred'].to_numpy(), \
+               data_val['period'].to_numpy(), data_val['y_val'].to_numpy()
+
+    def _make_graph(self, x_pred, y_pred, x_val, y_val):
+
+        y_max = max(y_pred.max(), -(y_pred.min()), y_val.max(), -(y_val.min()))
+
+        y_mul = math.floor(math.log10(y_max))
+        y_mul = math.floor(y_mul/3)*3
+        y_mul = max(y_mul, 0)
+
+        y_pred_m = y_pred*10**(-y_mul)
+        y_val_m = y_val*10**(-y_mul)
+
+        fig, ax = plt.subplots()
+
+        ax.plot(x_pred, y_pred_m, label='Спрогнозированные значения')
+        if len(x_val):
+            ax.plot(x_val, y_val_m, label='Проверочные значения')
+
+        # ax.set_xlabel(x_label + '\n' + '\\ {}'.format(10**x_mul))
+        ax.set_ylabel('* {}'.format(10**y_mul))
+
+        ax.legend()
+
+        fig.set_figwidth(8)  # ширина и
+        fig.set_figheight(8)  # высота "Figure"
+
+        plt.xticks(rotation=45)
+
+        ax.grid()
+
+        # plt.show()
+        fig.savefig(self.graph_file_name)
+
+
 class LinearModel(BaseModel):
 
     type = 'linear_regression'
@@ -1200,10 +1424,33 @@ class DataProcessor:
                                             list(pd_data['period'].unique())
         return organisations, scenarios, periods
 
-    def write_model_to_db(self, model_description):
+    def write_model_to_db(self, model_id, model_description):
+        model_description['model_id'] = model_id
         self._db_connector.write_model_description(model_description)
 
     def get_x_y_for_fitting(self, data, additional_data, encode_fields=None, model_filter=None):
+
+        data = self.get_data_for_fitting(data, additional_data, encode_fields=encode_fields, model_filter=model_filter)
+
+        data = self._drop_non_numeric_columns(data, additional_data['x_indicators'] + additional_data['y_indicators'])
+
+        y_columns = ['ind_{}'.format(ind_line['short_id']) for ind_line in additional_data['y_indicators']]
+
+        inputs = data.copy()
+        inputs = inputs.drop(y_columns, axis=1)
+
+        outputs = data.copy()
+        outputs = outputs[y_columns]
+
+        x_columns = list(inputs.columns)
+        x = inputs.to_numpy()
+
+        y_columns = list(outputs.columns)
+        y = outputs.to_numpy()
+
+        return x, y, x_columns, y_columns
+
+    def get_data_for_fitting(self, data, additional_data, encode_fields=None, model_filter=None):
 
         data = pd.DataFrame(data)
         if model_filter:
@@ -1222,25 +1469,9 @@ class DataProcessor:
         if encode_fields:
             data = self._prepare_dataset_one_hot_encode(data, additional_data, encode_fields)
 
-        data = self._drop_non_numeric_columns(data, indicators)
-
         data = self._process_na(data, additional_data['y_indicators'])
 
-        y_columns = ['ind_{}'.format(ind_line['short_id']) for ind_line in additional_data['y_indicators']]
-
-        inputs = data.copy()
-        inputs = inputs.drop(y_columns, axis=1)
-
-        outputs = data.copy()
-        outputs = outputs[y_columns]
-
-        x_columns = list(inputs.columns)
-        x = inputs.to_numpy()
-
-        y_columns = list(outputs.columns)
-        y = outputs.to_numpy()
-
-        return x, y, x_columns, y_columns
+        return data
 
     def get_x_for_prediction(self, data, additional_data, encode_fields=None):
 
@@ -1559,7 +1790,6 @@ class DataProcessor:
 
             is_na = not_el
 
-
         return is_na
 
     @staticmethod
@@ -1664,6 +1894,102 @@ class DataProcessor:
         return self._get_indicator_id(indicator_descr[0], indicator_descr[1])
 
 
+class PeriodicDataProcessor(DataProcessor):
+
+    def get_x_y_for_fitting(self, data, additional_data, encode_fields=None, model_filter=None):
+
+        data = self.get_data_for_fitting(data, additional_data, encode_fields=encode_fields, model_filter=model_filter)
+
+        data['period_dt'] = data['period'].apply(self.get_period)
+        scenarios = data['scenario'].unique()
+
+        x, y = None, None
+        x_columns = [el for el in list(data.columns) if el[:4]=='ind_']
+        y_columns = ['ind_{}'.format(ind_line['short_id']) for ind_line in additional_data['y_indicators']]
+        # x_columns = [el for el in ind_columns if el not in y_columns]
+
+        for scenario in scenarios:
+
+            data_sc = data.loc[data['scenario']==scenario].copy()
+            data_sc = data_sc.sort_values('period_dt')
+            # data_sc = data_sc[ind_columns]
+            x_data = data_sc[x_columns].values
+            y_data = data_sc[y_columns].values
+
+            if data_sc.shape[0] >= additional_data['past_history'] + additional_data['future_target']:
+                x_sc, y_sc = self.multivariate_data(x_data, y_data, 0,
+                                                    data_sc.shape[0] - additional_data['future_target'],
+                                                    additional_data['past_history'],
+                                                    additional_data['future_target'], 1)
+                if x:
+                    x = np.concatenate((x, x_sc), axis=0)
+                else:
+                    x = x_sc
+
+                if y:
+                    y = np.concatenate((y, y_sc), axis=0)
+                else:
+                    y = y_sc
+
+        return x, y, x_columns, y_columns
+
+    @staticmethod
+    def multivariate_data(dataset, target, start_index, end_index, history_size,
+                          target_size, step, single_step=False):
+        data = []
+        labels = []
+
+        start_index = start_index + history_size
+        if end_index is None:
+            end_index = len(dataset) - target_size
+
+        for i in range(start_index, end_index):
+            indices = range(i - history_size, i, step)
+
+            data.append(dataset[indices])
+
+            if target.any():
+                if single_step:
+                    labels.append(target[i + target_size])
+                else:
+                    labels.append(target[i:i + target_size])
+
+        return np.array(data), np.array(labels)
+
+    @staticmethod
+    def get_period(period_str):
+        return datetime.datetime.strptime(period_str, '%d.%m.%Y')
+
+    def get_x_for_prediction(self, data, additional_data, encode_fields=None):
+
+        data = self._add_short_ids_to_data(data)
+        data = self.get_data_for_fitting(data, additional_data, encode_fields=encode_fields)
+
+        data['period_dt'] = data['period'].apply(self.get_period)
+        scenarios = data['scenario'].unique()
+
+        if len(scenarios) != 1:
+            raise ProcessorException('Periodic model needs data with one scenario for prediction,' +
+                                     'but now data contains {} scenarios'.format(scenarios))
+
+        data = data.sort_values('period_dt')
+
+        x_data = data[additional_data['x_columns']].values
+
+        x, y = self.multivariate_data(x_data, np.array(list()), 0,
+                                      data.shape[0]+1,
+                                      additional_data['past_history'],
+                                      0, 1)
+
+        return x, data
+
+    def _process_na(self, dataset, y_indicators=None):
+
+        dataset = dataset.fillna(0)
+
+        return dataset
+
+
 @JobProcessor.job_processing
 def load_data(parameters):
 
@@ -1749,3 +2075,16 @@ def get_factor_analysis_data(parameters):
         result['graph_data'] = base64.b64encode(graph_bin).decode(encoding='utf-8')
 
     return result
+
+
+def disable_gpu():
+    try:
+        # Disable all GPUS
+        tf.config.set_visible_devices([], 'GPU')
+        visible_devices = tf.config.get_visible_devices()
+        print(visible_devices)
+        for device in visible_devices:
+            assert device.device_type != 'GPU'
+    except Exception as e:
+        error_text = 'Invalid device or cannot modify virtual devices once initialized.'
+        raise ProcessorException('{}. {}'.format(error_text, str(e)))
