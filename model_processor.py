@@ -1128,9 +1128,13 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
 
         pd_data_val = pd.DataFrame(y_val)
 
-        pd_data = pd_data.merge(pd_data_val, on='period', how='left')
-        pd_data = pd_data.rename({'value': 'y_val'}, axis=1)
-        pd_data = pd_data.fillna('na')
+        if len(y_val):
+            pd_data = pd_data.merge(pd_data_val, on='period', how='left')
+            pd_data = pd_data.rename({'value': 'y_val'}, axis=1)
+            pd_data = pd_data.fillna('na')
+        else:
+            pd_data['y_val'] = 'na'
+
         data_pred = pd_data[['period', 'y_pred']]
         data_val = pd_data.loc[pd_data['y_val'] != 'na']
 
