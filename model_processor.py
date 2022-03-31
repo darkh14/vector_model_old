@@ -94,7 +94,8 @@ class ModelProcessor:
 
         prediction, indicator_description, graph_bin = self.model.predict(inputs,
                                                                           get_graph=get_graph,
-                                                                          graph_data=graph_data)
+                                                                          graph_data=graph_data,
+                                                                          additional_parameters=parameters)
 
         return prediction, indicator_description, graph_bin
 
@@ -279,7 +280,7 @@ class BaseModel:
         """method for fitting model"""
 
     @abstractmethod
-    def predict(self, inputs, get_graph=False, graph_data=None):
+    def predict(self, inputs, get_graph=False, graph_data=None, additional_parameters=None):
         """method for predicting data from model"""
 
     @abstractmethod
@@ -678,7 +679,7 @@ class NeuralNetworkModel(BaseModel):
 
         return history.history
 
-    def predict(self, inputs, get_graph=False, graph_data=None):
+    def predict(self, inputs, get_graph=False, graph_data=None, additional_parameters=None):
 
         data = pd.DataFrame(inputs)
         additional_data = {'x_indicators': self.x_indicators,
@@ -1034,7 +1035,16 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
 
         return history.history
 
-    def predict(self, inputs, get_graph=False, graph_data=None):
+    def predict(self, inputs, get_graph=False, graph_data=None, additional_parameters=None):
+
+        past_periods = additional_parameters['past_periods']
+        future_periods = additional_parameters['future_periods']
+
+        if not past_periods:
+            raise ProcessorException('"past_periods" not in parameters')
+
+        if not future_periods:
+            raise ProcessorException('"future_periods" not in parameters')
 
         data = pd.DataFrame(inputs)
         additional_data = {'x_indicators': self.x_indicators,
@@ -1045,7 +1055,9 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
                            'x_columns': self.x_columns,
                            'y_columns': self.y_columns,
                            'past_history': self.past_history,
-                           'future_target': self.future_target}
+                           'future_target': self.future_target,
+                           'past_periods': past_periods,
+                           'future_periods': future_periods}
 
         encode_fields = None
         x, x_pd = self._data_processor.get_x_for_prediction(data, additional_data, encode_fields)
@@ -1108,8 +1120,8 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
     def _get_dataframe_for_graph_periods(y, y_val, periods):
 
         if len(periods) != len(y):
-            raise ProcessorException('Number of periods ({}) not equal to number of predicted values ' +
-                                     '({})'.format(len(periods), len(y)))
+            raise ProcessorException('Number of periods ({}) not equal to '
+                                     'number of predicted values ({})'.format(len(periods), len(y)))
 
         pd_data = pd.DataFrame(periods, columns=['period'])
         pd_data['y_pred'] = y
@@ -1218,7 +1230,7 @@ class LinearModel(BaseModel):
 
         return rmse
 
-    def predict(self, inputs, get_graph=False, graph_data=None):
+    def predict(self, inputs, get_graph=False, graph_data=None, additional_parameters=None):
 
         data = pd.DataFrame(inputs)
         additional_data = {'x_indicators': self.x_indicators,
@@ -1964,6 +1976,8 @@ class PeriodicDataProcessor(DataProcessor):
 
         data = self._add_short_ids_to_data(data)
         data = self.get_data_for_fitting(data, additional_data, encode_fields=encode_fields)
+
+        data = data.loc[data['period'].isin(additional_data['past_periods'])].copy()
 
         data['period_dt'] = data['period'].apply(self.get_period)
         scenarios = data['scenario'].unique()
