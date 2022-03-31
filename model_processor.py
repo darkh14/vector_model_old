@@ -1143,19 +1143,28 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
 
     def _make_graph(self, x_pred, y_pred, x_val, y_val):
 
-        y_max = max(y_pred.max(), -(y_pred.min()), y_val.max(), -(y_val.min()))
+        if len(y_val):
+            y_val_max = y_val.max()
+            y_val_min = y_val.min()
+        else:
+            y_val_max = 0
+            y_val_min = 0
+
+        y_max = max(y_pred.max(), -(y_pred.min()), y_val_max, -(y_val_min))
 
         y_mul = math.floor(math.log10(y_max))
         y_mul = math.floor(y_mul/3)*3
         y_mul = max(y_mul, 0)
 
         y_pred_m = y_pred*10**(-y_mul)
-        y_val_m = y_val*10**(-y_mul)
+
+        if len(y_val):
+            y_val_m = y_val*10**(-y_mul)
 
         fig, ax = plt.subplots()
 
         ax.plot(x_pred, y_pred_m, label='Спрогнозированные значения')
-        if len(x_val):
+        if len(y_val):
             ax.plot(x_val, y_val_m, label='Проверочные значения')
 
         # ax.set_xlabel(x_label + '\n' + '\\ {}'.format(10**x_mul))
