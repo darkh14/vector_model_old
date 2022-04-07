@@ -119,6 +119,13 @@ class Connector:
 
         self.write_model_description(model_description)
 
+    def write_model_analytics(self, model_id, x_analytics, y_analytics):
+        model_description = self.read_model_description(model_id)
+        model_description['x_analytics'] = x_analytics
+        model_description['y_analytics'] = y_analytics
+
+        self.write_model_description(model_description)
+
     def write_model_fi(self, model_id, fi):
         model_description = self.read_model_description(model_id)
         model_description['feature_importances'] = fi

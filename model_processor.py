@@ -221,6 +221,8 @@ class BaseModel:
             self.scenarios = description_from_db['scenarios']
             self.x_columns = description_from_db['x_columns']
             self.y_columns = description_from_db['y_columns']
+            self.x_analytics = description_from_db.get('x_analytics')
+            self.y_analytics = description_from_db.get('x_analytics')
             self.feature_importances = description_from_db.get('feature_importances')
             self.filter = description_from_db.get('filter')
         else:
@@ -233,6 +235,8 @@ class BaseModel:
             self.scenarios = []
             self.x_columns = []
             self.y_columns = []
+            self.x_analytics = []
+            self.y_analytics = []
             self.feature_importances = []
             self.filter = model_filter
 
@@ -270,6 +274,8 @@ class BaseModel:
                                  'scenarios': self.scenarios,
                                  'x_columns': self.x_columns,
                                  'y_columns': self.y_columns,
+                                 'x_analytics': self.x_analytics,
+                                 'y_analytics': self.y_analytics,
                                  'feature_importances': self.feature_importances}
 
             self._data_processor.write_model_to_db(self.model_id, model_description)
@@ -635,17 +641,17 @@ class NeuralNetworkModel(BaseModel):
         encode_fields = None
         x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data, encode_fields,
                                                                               self.filter)
-
+        x_analytics, y_analytics = self._data_processor.get_analytics_description(x_columns + y_columns,
+                                                                                   self.x_indicators, self.y_indicators)
         self.x_columns = x_columns
         self.y_columns = y_columns
+
+        self.x_analytics = x_analytics
+        self.y_analytics = y_analytics
+
         if not retrofit:
             self._data_processor.write_columns(self.model_id, x_columns, y_columns)
-
-        # x_scaler = self._get_scaler(retrofit=retrofit)
-        # x_sc = x_scaler.fit_transform(x)
-        #
-        # y_scaler = self._get_scaler(retrofit=retrofit, is_out=True)
-        # y_sc = y_scaler.fit_transform(y)
+            self._data_processor.write_analytics_decription(self.model_id, x_analytics, y_analytics)
 
         inner_model = self._get_inner_model(x.shape[1], y.shape[1], retrofit=retrofit)
 
@@ -653,17 +659,11 @@ class NeuralNetworkModel(BaseModel):
         self._epochs = epochs or 1000
         self._validation_split = validation_split or 0.2
 
-        # normalizer = inner_model.layers[0]
-        # normalizer.adapt(x)
-
         inner_model.compile(optimizer=optimizers.Adam(learning_rate=0.001), loss='MeanSquaredError',
                             metrics=['RootMeanSquaredError'])
         history = inner_model.fit(x, y, epochs=self._epochs, verbose=2, validation_split=self._validation_split)
 
         self._inner_model = inner_model
-
-        # self._data_processor.write_scaler(self.model_id, x_scaler)
-        # self._data_processor.write_scaler(self.model_id, y_scaler, is_out=True)
 
         y_pred = inner_model.predict(x)
 
@@ -708,9 +708,12 @@ class NeuralNetworkModel(BaseModel):
 
         outputs = data.drop(self.x_columns, axis=1)
 
-        indicators_description = self.x_indicators + self.y_indicators
+        description = {'x_indicators': self.x_indicators,
+                       'y_indicators': self.y_indicators,
+                       'x_analytics': self.x_analytics,
+                       'y_analytics': self.y_analytics}
 
-        return outputs.to_dict('records'), indicators_description, graph_bin
+        return outputs.to_dict('records'), description, graph_bin
 
     def calculate_feature_importances(self, date_from=None, epochs=1000, retrofit=False, validation_split=0.2):
 
@@ -990,13 +993,17 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
         x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data, encode_fields,
                                                                               self.filter)
 
-        # with open('x.json', 'w') as f:
-        #     json.dump(x.tolist(), f)
-        # with open('y.json', 'w') as f:
-        #     json.dump(y.tolist(), f)
-
         self.x_columns = x_columns
         self.y_columns = y_columns
+
+        x_analytics, y_analytics = self._data_processor.get_analytics_description(x_columns + y_columns,
+                                                                                  self.x_indicators, self.y_indicators)
+        self.x_analytics = x_analytics
+        self.y_analytics = y_analytics
+
+        if not retrofit:
+            self._data_processor.write_columns(self.model_id, x_columns, y_columns)
+            self._data_processor.write_analytics_decription(self.model_id, x_analytics, y_analytics)
 
         disable_gpu()
 
@@ -1005,9 +1012,6 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
 
         x_y_data = tf.data.Dataset.from_tensor_slices((x, y))
         x_y_data = x_y_data.cache().shuffle(BUFFER_SIZE).batch(BATCH_SIZE).repeat()
-
-        if not retrofit:
-            self._data_processor.write_columns(self.model_id, x_columns, y_columns)
 
         inner_model = self._get_inner_model(x.shape[-2:], y.shape[-2], retrofit=retrofit)
 
@@ -1075,9 +1079,12 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
         if get_graph:
             graph_bin = self._get_graph_bin(y, graph_data)
 
-        indicators_description = self.x_indicators + self.y_indicators
+        description = {'x_indicators': self.x_indicators,
+                       'y_indicators': self.y_indicators,
+                       'x_analytics': self.x_analytics,
+                       'y_analytics': self.y_analytics}
 
-        return y, indicators_description, graph_bin
+        return y, description, graph_bin
 
     @staticmethod
     def _create_inner_model(inputs_number=0, outputs_number=0):
@@ -1537,6 +1544,9 @@ class DataProcessor:
     def write_columns(self, model_id, x_columns, y_columns):
         self._db_connector.write_model_columns(model_id, x_columns, y_columns)
 
+    def write_analytics_decription(self, model_id, x_analytics, y_analytics):
+        self._db_connector.write_model_analytics(model_id, x_analytics, y_analytics)
+
     def write_scaler(self, model_id, scaler, is_out=False):
         scaler_packed = pickle.dumps(scaler, protocol=pickle.HIGHEST_PROTOCOL)
         self._db_connector.write_model_scaler(model_id, scaler_packed, is_out)
@@ -1887,6 +1897,9 @@ class DataProcessor:
     def _get_analytics_short_id(self, analytics_data):
         return self._db_connector.get_short_id(analytics_data[0] + ' ' + analytics_data[1])
 
+    def _get_analytics_description_from_short_id(self, short_id):
+        return self._db_connector.read_analytics_from_short_id(short_id)
+
     @staticmethod
     def _get_year(date_str):
         return int(date_str.split('.')[2])
@@ -1929,6 +1942,27 @@ class DataProcessor:
 
     def _get_indicator_id_one_arg(self, indicator_descr):
         return self._get_indicator_id(indicator_descr[0], indicator_descr[1])
+
+    def get_analytics_description(self, columns, x_indicators, y_indicators):
+
+        x_ind_ids = [ind['short_id'] for ind in x_indicators]
+        y_ind_ids = [ind['short_id'] for ind in y_indicators]
+
+        x_analytics = []
+        y_analytics = []
+        for column in columns:
+            if len(column) > 4:
+                if column[4:11] in x_ind_ids:
+                    c_col_list = column.split('_')
+                    if len(c_col_list) >= 3 and c_col_list[2] == 'an':
+                        x_analytics.append(self._get_analytics_description_from_short_id(c_col_list[3]))
+
+                if column[4:11] in y_ind_ids:
+                    c_col_list = column.split('_')
+                    if len(c_col_list) >= 3 and c_col_list[2] == 'an':
+                        y_analytics.append(self._get_analytics_description_from_short_id(c_col_list[3]))
+
+        return x_analytics, y_analytics
 
 
 class PeriodicDataProcessor(DataProcessor):
