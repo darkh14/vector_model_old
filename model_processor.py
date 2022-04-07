@@ -1459,7 +1459,8 @@ class DataProcessor:
 
         data = self._drop_non_numeric_columns(data, additional_data['x_indicators'] + additional_data['y_indicators'])
 
-        y_columns = ['ind_{}'.format(ind_line['short_id']) for ind_line in additional_data['y_indicators']]
+        # y_columns = ['ind_{}'.format(ind_line['short_id']) for ind_line in additional_data['y_indicators']]
+        y_columns = self._get_columns_by_indicators(data.columns, additional_data['y_indicators'])
 
         inputs = data.copy()
         inputs = inputs.drop(y_columns, axis=1)
@@ -1497,6 +1498,15 @@ class DataProcessor:
         data = self._process_na(data, additional_data['y_indicators'])
 
         return data
+
+    @staticmethod
+    def _get_columns_by_indicators(columns, indicators):
+        ind_ids = [ind['short_id'] for ind in indicators]
+
+        result_columns = [col for col in columns if len(col) >= 10 and col[4:11] in ind_ids
+                          and len(col.split('_')) != 6]
+
+        return result_columns
 
     def get_x_for_prediction(self, data, additional_data, encode_fields=None):
 
@@ -1786,7 +1796,9 @@ class DataProcessor:
     def _process_na(self, dataset, y_indicators=None):
 
         if y_indicators:
-            y_columns = ['ind_{}'.format(ind_line['short_id']) for ind_line in y_indicators]
+            columns = list(dataset.columns)
+
+            y_columns = self._get_columns_by_indicators(columns, y_indicators)
 
             dataset['y_na'] = dataset[y_columns].apply(self._get_na, axis=1)
 

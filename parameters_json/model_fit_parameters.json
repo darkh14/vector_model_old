@@ -1,1 +1,56 @@
-﻿{"request_type": "model_fit","model": {"name": "Модель Баланс Дебиторская задолженность периодическая","type": "periodic_neural_network","id": "c09cd51e-afe9-11ec-921b-fa163e42cd35","need_to_update": true,"filter": {"organisation": "Производство ООО"},"past_history": 24,"future_target": 12,"x_indicators": [{"id": "c7127d91-2513-11ec-9c9f-104a7db0035f","report_type": "00. Показатели","name": "Процент предоплаты клиентов значение","use_analytics": true,"period_shift": 0},{"id": "a67d2c94-2527-11ec-9c9f-104a7db0035f","report_type": "02. Бюджет продаж","name": "Выручка от продаж значение","use_analytics": true,"period_shift": 0},{"id": "a67d2c94-2527-11ec-9c9f-104a7db0035f","report_type": "02. Бюджет продаж","name": "Выручка от продаж значение","use_analytics": true,"period_shift": -1},{"id": "cfed8e45-25a5-11ec-9c9f-104a7db0035f","report_type": "04. Бюджет инвестиционного проекта","name": "Выручка от продаж значение","use_analytics": true,"period_shift": 0}],"y_indicators": [{"id": "481d20fa-25e4-11ec-9c9f-104a7db0035f","report_type": "17. Баланс","name": "Дебиторская задолженность изменение"}]},"background_job": false,"epochs": 10,"retrofit": false,"date_from": "27.03.2022","service_name": "vector_model","db": "Srvr=\"nfp-dev1\";Ref=\"uh_vector_model\";"}
+﻿{
+"request_type": "model_fit",
+"model": {
+"name": "Модель Выручка от продаж значение обратная по аналитике",
+"type": "neural_network",
+"id": "10cf2adb-b63b-11ec-921d-fa163e42cd35",
+"need_to_update": true,
+"filter": {
+"organisation": "Производство ООО"
+},
+"x_indicators": [
+{
+"id": "c7127d91-2513-11ec-9c9f-104a7db0035f",
+"report_type": "00. Показатели",
+"name": "Процент предоплаты клиентов значение",
+"use_analytics": true,
+"period_shift": 0
+},
+{
+"id": "a67d2c94-2527-11ec-9c9f-104a7db0035f",
+"report_type": "02. Бюджет продаж",
+"name": "Выручка от продаж значение",
+"use_analytics": true,
+"period_shift": -1
+},
+{
+"id": "cfed8e45-25a5-11ec-9c9f-104a7db0035f",
+"report_type": "04. Бюджет инвестиционного проекта",
+"name": "Выручка от продаж значение",
+"use_analytics": true,
+"period_shift": 0
+},
+{
+"id": "481d20fa-25e4-11ec-9c9f-104a7db0035f",
+"report_type": "17. Баланс",
+"name": "Дебиторская задолженность изменение",
+"use_analytics": false,
+"period_shift": 0
+}
+],
+"y_indicators": [
+{
+"id": "a67d2c94-2527-11ec-9c9f-104a7db0035f",
+"report_type": "02. Бюджет продаж",
+"name": "Выручка от продаж значение",
+"use_analytics": true
+}
+]
+},
+"background_job": false,
+"epochs": 100,
+"retrofit": false,
+"date_from": "04.04.2022",
+"service_name": "vector_model",
+"db": "Srvr=\"nfp-dev1\";Ref=\"uh_vector_model\";"
+}
