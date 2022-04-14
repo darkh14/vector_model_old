@@ -112,7 +112,7 @@ class Processor:
         result['model_get_factor_analysis_data'] = model_processor.get_factor_analysis_data
         result['job_get_state'] = job_processor.job_get_state
         result['job_delete'] = job_processor.job_delete
-        result['ping'] = self.ping()
+        result['ping'] = self.ping
 
         return result
 
