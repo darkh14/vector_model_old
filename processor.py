@@ -127,7 +127,7 @@ class Processor:
         return json.loads(x_str)
 
     @staticmethod
-    def ping():
+    def ping(parameters):
         return {'status': 'OK', 'error_text': '', 'description': 'ping OK'}
 
 
