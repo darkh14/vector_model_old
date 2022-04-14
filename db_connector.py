@@ -92,15 +92,14 @@ class Connector:
 
         return result
 
-    def write_indicator(self, indicator_id, indicator_name, report_type):
-        line = {'id': indicator_id, 'name': indicator_name, 'report_type': report_type}
-        line['short_id'] = self.get_short_id(indicator_id)
-        self._write_line('indicators', line, selections=['id'])
+    def write_indicator(self, indicator):
+        self._write_line('indicators', indicator, selections=['id'])
 
-    def write_analytics(self, analytics_id, analytics_name, analytics_type):
-        line = {'id': analytics_id, 'name': analytics_name, 'type': analytics_type}
-        line['short_id'] = self.get_short_id(analytics_id + ' ' + analytics_type)
-        self._write_line('analytics', line, selections=['id', 'type'])
+    def write_analytic(self, analytic):
+        self._write_line('analytics', analytic, selections=['id', 'type'])
+
+    def write_analytic_key(self, analytic_key):
+        self._write_line('analytic_keys', analytic_key, selections=['short_id'])
 
     def read_model_description(self, model_id):
         return self._read_line('models', {'model_id': model_id})
