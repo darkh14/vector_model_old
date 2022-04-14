@@ -301,7 +301,6 @@ class BaseModel:
         fi['feature'] = x_columns
         fi = fi.sort_values(by='feature_importance', ascending=False)
         fi['indicator'] = fi['feature'].apply(self._data_processor.get_indicator_name)
-        fi['report_type'] = fi['feature'].apply(self._data_processor.get_indicator_report_type)
 
         fi = fi.to_dict('records')
         self._data_processor.write_feature_importances(self.model_id, fi)
@@ -623,7 +622,7 @@ class NeuralNetworkModel(BaseModel):
         else:
             date_from = datetime.datetime.strptime(date_from, '%d.%m.%Y')
 
-        indicator_filter = [ind_data['id'] for ind_data in self.x_indicators + self.y_indicators]
+        indicator_filter = [ind_data['short_id'] for ind_data in self.x_indicators + self.y_indicators]
 
         data = self._data_processor.read_raw_data(indicator_filter, date_from=date_from)
         if retrofit and self.need_to_update:
@@ -1283,8 +1282,7 @@ class LinearModel(BaseModel):
 
         outputs = data.drop(self.x_columns, axis=1)
 
-        indicators_description = {x_ind: {'indicator': self._data_processor.get_indicator_name(x_ind),
-                                          'report_type': self._data_processor.get_indicator_report_type(x_ind)}
+        indicators_description = {x_ind: {'indicator': self._data_processor.get_indicator_name(x_ind)}
                                   for x_ind in self.x_indicators + self.y_indicators}
 
         return outputs.to_dict('records'), indicators_description, graph_bin
@@ -1298,7 +1296,6 @@ class LinearModel(BaseModel):
         fi['feature'] = self.x_columns
         fi = fi.sort_values(by='feature_importance', ascending=False)
         fi['indicator'] = fi['feature'].apply(self._data_processor.get_indicator_name)
-        fi['report_type'] = fi['feature'].apply(self._data_processor.get_indicator_report_type)
 
         fi = fi.to_dict('records')
         self._data_processor.write_feature_importances(self.model_id, fi)
@@ -1386,7 +1383,7 @@ class DataProcessor:
     def get_indicators_data_from_parameters(self, indicator_parameters):
         result = []
         for parameters_line in indicator_parameters:
-            result_line = self._db_connector.read_indicator_from_id(parameters_line['id'])
+            result_line = self._db_connector.read_indicator_from_type_id(parameters_line['type'], parameters_line['id'])
             result_line.update(parameters_line)
             result.append(result_line)
 
@@ -1432,15 +1429,6 @@ class DataProcessor:
         analytics_line = self._db_connector.read_analytics_from_short_id(short_id)
         if analytics_line:
             result = analytics_line['name'], analytics_line['type'], analytics_line['id']
-
-        return result
-
-    def get_indicator_report_type(self, indicator_id):
-        indicator_id = indicator_id.replace('_value', '')
-        result = None
-        indicator_line = self._db_connector.read_indicator_from_id(indicator_id)
-        if indicator_line:
-            result = indicator_line['report_type']
 
         return result
 
@@ -1698,14 +1686,6 @@ class DataProcessor:
         for an_el in analytics_list:
             an_el['short_id'] = self._make_short_id_from_dict(an_el)
         return analytics_list
-
-    def _add_short_ids_to_data(self, dataset):
-
-        dataset['indicator_short_id'] = dataset['indicator_id'].apply(self._get_indicator_short_id)
-        dataset['analytics_short_id'] = dataset[['analytics_1_id',
-                                                 'analytics_1_type']].apply(self._get_analytics_short_id, axis=1)
-
-        return dataset
 
     @staticmethod
     def _prepare_dataset_group(dataset):
@@ -1970,8 +1950,9 @@ class DataProcessor:
 
         return '{:02}.{:02}.{}'.format(day, month, year)
 
-    def _get_indicator_short_id(self, indicator_id):
-        return self._db_connector.get_short_id(indicator_id)
+    def _get_indicator_short_id(self, indicator_type, indicator_id):
+        value_str = indicator_id + indicator_type
+        return self._db_connector.get_short_id(value_str)
 
     def _get_analytics_short_id(self, analytics_data):
         return self._db_connector.get_short_id(analytics_data[0] + ' ' + analytics_data[1])

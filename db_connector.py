@@ -64,8 +64,8 @@ class Connector:
 
         print('---Loading raw data started---')
 
-    def read_indicator_from_id(self, indicator_id):
-        result = self._read_line('indicators', {'id': indicator_id})
+    def read_indicator_from_type_id(self, indicator_type, indicator_id):
+        result = self._read_line('indicators', {'type': indicator_type, 'id': indicator_id})
         if result:
             result.pop('_id')
 
@@ -154,7 +154,7 @@ class Connector:
         collection = self.get_collection('raw_data')
         db_filter = dict()
         if indicators:
-            db_filter['indicator_id'] = {'$in': indicators}
+            db_filter['indicator_short_id'] = {'$in': indicators}
         if date_from:
             db_filter['loading_date'] = {'$gte': datetime.strptime(date_from, '%d.%m.%Y')}
 
