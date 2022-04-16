@@ -1361,8 +1361,9 @@ class DataProcessor:
         result = []
         for parameters_line in indicator_parameters:
             result_line = self._db_connector.read_indicator_from_type_id(parameters_line['type'], parameters_line['id'])
+            if not result_line:
+                raise ProcessorException('indicator {}, id {} not found in indicators'.format(parameters_line.get('name'), parameters_line['id']))
             result_line.update(parameters_line)
-            result.append(result_line)
 
         return result
 
