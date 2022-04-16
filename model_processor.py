@@ -1667,9 +1667,12 @@ class DataProcessor:
     @staticmethod
     def _prepare_dataset_group(dataset):
 
-        columns_to_drop = ['indicator', 'report_type', 'analytics']
+        columns_to_drop = ['indicator', 'analytics']
         if '_id' in list(dataset.columns):
             columns_to_drop.append('_id')
+
+        if 'report_type' in list(dataset.columns):
+            columns_to_drop.append('report_type')
 
         dataset.drop(columns_to_drop, axis=1, inplace=True)
         dataset.rename({'indicator_short_id': 'indicator'}, axis=1, inplace=True)
