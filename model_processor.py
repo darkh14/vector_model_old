@@ -224,6 +224,8 @@ class BaseModel:
             self.y_columns = description_from_db['y_columns']
             self.x_analytics = description_from_db.get('x_analytics')
             self.y_analytics = description_from_db.get('x_analytics')
+            self.x_analytic_keys = description_from_db.get('x_analytic_keys')
+            self.y_analytic_keys = description_from_db.get('y_analytic_keys')
             self.feature_importances = description_from_db.get('feature_importances')
             self.filter = description_from_db.get('filter')
         else:
@@ -238,6 +240,8 @@ class BaseModel:
             self.y_columns = []
             self.x_analytics = []
             self.y_analytics = []
+            self.x_analytic_keys = []
+            self.y_analytic_keys = []
             self.feature_importances = []
             self.filter = model_filter
 
@@ -617,41 +621,7 @@ class NeuralNetworkModel(BaseModel):
 
     def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
 
-        if not retrofit:
-            date_from = None
-        else:
-            date_from = datetime.datetime.strptime(date_from, '%d.%m.%Y')
-
-        indicator_filter = [ind_data['short_id'] for ind_data in self.x_indicators + self.y_indicators]
-
-        data = self._data_processor.read_raw_data(indicator_filter, date_from=date_from)
-        if retrofit and self.need_to_update:
-            raise ProcessorException('Model can not be updated when retrofit')
-
-        self.update_model(data)
-
-        additional_data = {'x_indicators': self.x_indicators,
-                           'y_indicators': self.y_indicators,
-                           'periods': self.periods,
-                           'organisations': self.organisations,
-                           'scenarios': self.scenarios,
-                           'x_columns': self.x_columns,
-                           'y_columns': self.y_columns}
-        # encode_fields = {'organisation': 'organisations', 'year': 'years', 'month': 'months'}
-        encode_fields = None
-        x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data, encode_fields,
-                                                                              self.filter)
-        x_analytics, y_analytics = self._data_processor.get_analytics_description(x_columns + y_columns,
-                                                                                   self.x_indicators, self.y_indicators)
-        self.x_columns = x_columns
-        self.y_columns = y_columns
-
-        self.x_analytics = x_analytics
-        self.y_analytics = y_analytics
-
-        if not retrofit:
-            self._data_processor.write_columns(self.model_id, x_columns, y_columns)
-            self._data_processor.write_analytics_decription(self.model_id, x_analytics, y_analytics)
+        x, y = self._prepare_for_fit(retrofit, date_from)
 
         inner_model = self._get_inner_model(x.shape[1], y.shape[1], retrofit=retrofit)
 
@@ -665,17 +635,7 @@ class NeuralNetworkModel(BaseModel):
 
         self._inner_model = inner_model
 
-        y_pred = inner_model.predict(x)
-
-        rmse = np.sqrt(mean_squared_error(y, y_pred))
-        mspe = self._calculate_mspe(y, y_pred)
-        print("RMSE: {}".format(rmse))
-        print("MSPE: {}".format(mspe))
-
-        self._data_processor.write_model_field(self.model_id, 'rsme', rmse)
-        self._data_processor.write_model_field(self.model_id, 'mspe', mspe)
-
-        self._data_processor.write_inner_model(self.model_id, self._inner_model)
+        self._write_after_fit(x, y)
 
         return history.history
 
@@ -750,6 +710,65 @@ class NeuralNetworkModel(BaseModel):
 
         return fi
 
+    def _prepare_for_fit(self, retrofit, date_from, add_params=None):
+        if not retrofit:
+            date_from = None
+        else:
+            date_from = datetime.datetime.strptime(date_from, '%d.%m.%Y')
+
+        indicator_filter = [ind_data['short_id'] for ind_data in self.x_indicators + self.y_indicators]
+
+        data = self._data_processor.read_raw_data(indicator_filter, date_from=date_from)
+        if retrofit and self.need_to_update:
+            raise ProcessorException('Model can not be updated when retrofit')
+
+        self.update_model(data)
+
+        additional_data = {'x_indicators': self.x_indicators,
+                           'y_indicators': self.y_indicators,
+                           'periods': self.periods,
+                           'organisations': self.organisations,
+                           'scenarios': self.scenarios,
+                           'x_columns': self.x_columns,
+                           'y_columns': self.y_columns}
+        if add_params:
+            additional_data.update(add_params)
+
+        # encode_fields = {'organisation': 'organisations', 'year': 'years', 'month': 'months'}
+        encode_fields = None
+        x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data, encode_fields,
+                                                                              self.filter)
+        x_analytics, y_analytics, x_analytic_keys, y_analytic_keys = \
+            self._data_processor.get_analytics_description(x_columns + y_columns, self.x_indicators, self.y_indicators)
+        self.x_columns = x_columns
+        self.y_columns = y_columns
+
+        self.x_analytics = x_analytics
+        self.y_analytics = y_analytics
+
+        self.x_analytic_keys = x_analytic_keys
+        self.y_analytic_keys = y_analytic_keys
+
+        if not retrofit:
+            self._data_processor.write_columns(self.model_id, x_columns, y_columns)
+            self._data_processor.write_analytics_decription(self.model_id, x_analytics, y_analytics, x_analytic_keys, y_analytic_keys)
+
+        return x, y
+
+    def _write_after_fit(self, x, y):
+
+        y_pred = self._inner_model.predict(x)
+
+        rmse = self._calculate_rsme(y, y_pred)
+        mspe = self._calculate_mspe(y, y_pred)
+        print("RMSE: {}".format(rmse))
+        print("MSPE: {}".format(mspe))
+
+        self._data_processor.write_model_field(self.model_id, 'rsme', rmse)
+        self._data_processor.write_model_field(self.model_id, 'mspe', mspe)
+
+        self._data_processor.write_inner_model(self.model_id, self._inner_model)
+
     def _calculate_fi_from_model(self, fi_model, x, y, x_columns):
         perm = PermutationImportance(fi_model, random_state=42).fit(x, y)
 
@@ -769,6 +788,10 @@ class NeuralNetworkModel(BaseModel):
         self._data_processor.write_feature_importances(self.model_id, fi)
 
         return fi
+
+    @staticmethod
+    def _calculate_rsme(y_true, y_pred):
+        return np.sqrt(mean_squared_error(y_true, y_pred))
 
     def _get_scaler(self, retrofit=False, is_out=False):
 
@@ -965,45 +988,8 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
 
     def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
 
-        if not retrofit:
-            date_from = None
-        else:
-            date_from = datetime.datetime.strptime(date_from, '%d.%m.%Y')
-
-        indicator_filter = [ind_data['id'] for ind_data in self.x_indicators + self.y_indicators]
-
-        data = self._data_processor.read_raw_data(indicator_filter, date_from=date_from)
-
-        if retrofit and self.need_to_update:
-            raise ProcessorException('Model can not be updated when retrofit')
-
-        self.update_model(data)
-
-        additional_data = {'x_indicators': self.x_indicators,
-                           'y_indicators': self.y_indicators,
-                           'periods': self.periods,
-                           'organisations': self.organisations,
-                           'scenarios': self.scenarios,
-                           'x_columns': self.x_columns,
-                           'y_columns': self.y_columns,
-                           'past_history': self.past_history,
-                           'future_target': self.future_target}
-
-        encode_fields = None
-        x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data, encode_fields,
-                                                                              self.filter)
-
-        self.x_columns = x_columns
-        self.y_columns = y_columns
-
-        x_analytics, y_analytics = self._data_processor.get_analytics_description(x_columns + y_columns,
-                                                                                  self.x_indicators, self.y_indicators)
-        self.x_analytics = x_analytics
-        self.y_analytics = y_analytics
-
-        if not retrofit:
-            self._data_processor.write_columns(self.model_id, x_columns, y_columns)
-            self._data_processor.write_analytics_decription(self.model_id, x_analytics, y_analytics)
+        add_parameters = {'past_history': self.past_history,  'future_target': self.future_target}
+        x, y = self._prepare_for_fit(retrofit, date_from, add_parameters)
 
         disable_gpu()
 
@@ -1025,17 +1011,7 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
 
         self._inner_model = inner_model
 
-        y_pred = inner_model.predict(x)
-        y_pred = y_pred.reshape(y_pred.shape[0], y_pred.shape[1], len(self.y_columns))
-        rmse = np.sqrt(self._calculate_rsme(y, y_pred))
-        mspe = self._calculate_mspe(y, y_pred)
-        print("RMSE: {}".format(rmse))
-        print("MSPE: {}".format(mspe))
-
-        self._data_processor.write_model_field(self.model_id, 'rsme', rmse)
-        self._data_processor.write_model_field(self.model_id, 'mspe', mspe)
-
-        self._data_processor.write_inner_model(self.model_id, self._inner_model)
+        self._write_after_fit(x, y.reshape(y.shape[0], y.shape[1]))
 
         return history.history
 
@@ -1106,9 +1082,10 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
     def _calculate_mspe(y_true, y_pred):
 
         eps = np.zeros(y_true.shape)
-        eps[:] = 0.0001
-        y_p = np.c_[abs(y_true), abs(y_pred), eps]
-        y_p = np.max(y_p, axis=2).reshape(y_p.shape[0], y_p.shape[1], 1)
+        eps[::] = 0.0001
+        y_p = np.c_[abs(np.expand_dims(y_true, axis=2)), abs(np.expand_dims(y_pred, axis=2)),
+                    np.expand_dims(eps, axis=2)]
+        y_p = np.max(y_p, axis=2)
 
         return np.sqrt(np.nanmean(np.square(((y_true - y_pred) / y_p))))
 
@@ -1477,7 +1454,7 @@ class DataProcessor:
         if model_filter:
             for filter_field, filter_value in model_filter.items():
                 data = data.loc[data[filter_field]==filter_value].copy()
-        data = self._add_short_ids_to_data(data)
+
         data_grouped, data_grouped_values = self._prepare_dataset_group(data)
 
         indicators = additional_data['x_indicators'] + additional_data['y_indicators']
@@ -1532,8 +1509,8 @@ class DataProcessor:
     def write_columns(self, model_id, x_columns, y_columns):
         self._db_connector.write_model_columns(model_id, x_columns, y_columns)
 
-    def write_analytics_decription(self, model_id, x_analytics, y_analytics):
-        self._db_connector.write_model_analytics(model_id, x_analytics, y_analytics)
+    def write_analytics_decription(self, model_id, x_analytics, y_analytics, x_analytic_keys, y_analytic_keys):
+        self._db_connector.write_model_analytics(model_id, x_analytics, y_analytics, x_analytic_keys, y_analytic_keys)
 
     def write_scaler(self, model_id, scaler, is_out=False):
         scaler_packed = pickle.dumps(scaler, protocol=pickle.HIGHEST_PROTOCOL)
@@ -1690,14 +1667,13 @@ class DataProcessor:
     @staticmethod
     def _prepare_dataset_group(dataset):
 
-        columns_to_drop = ['indicator_name', 'indicator_id', 'report_type', 'analytics_1_id', 'analytics_1_name',
-                           'analytics_1_type']
+        columns_to_drop = ['indicator', 'report_type', 'analytics']
         if '_id' in list(dataset.columns):
             columns_to_drop.append('_id')
 
         dataset.drop(columns_to_drop, axis=1, inplace=True)
         dataset.rename({'indicator_short_id': 'indicator'}, axis=1, inplace=True)
-        dataset.rename({'analytics_short_id': 'analytics'}, axis=1, inplace=True)
+        dataset.rename({'analytics_key_id': 'analytics'}, axis=1, inplace=True)
 
         data_grouped_values = dataset.groupby(['indicator', 'analytics', 'organisation', 'scenario', 'period',
                                                'periodicity'],
@@ -1960,6 +1936,9 @@ class DataProcessor:
     def _get_analytics_description_from_short_id(self, short_id):
         return self._db_connector.read_analytics_from_short_id(short_id)
 
+    def _get_analytics_description_from_key_id(self, key_id):
+        return self._db_connector.read_analytics_from_key_id(key_id)
+
     @staticmethod
     def _get_year(date_str):
         return int(date_str.split('.')[2])
@@ -2010,19 +1989,41 @@ class DataProcessor:
 
         x_analytics = []
         y_analytics = []
+
+        x_analytic_keys = []
+        y_analytic_keys = []
+
         for column in columns:
             if len(column) > 4:
                 if column[4:11] in x_ind_ids:
                     c_col_list = column.split('_')
                     if len(c_col_list) >= 3 and c_col_list[2] == 'an':
-                        x_analytics.append(self._get_analytics_description_from_short_id(c_col_list[3]))
+                        short_id = c_col_list[3]
+                        analytics = self._get_analytics_description_from_key_id(short_id)
+                        x_analytic_keys.append({'short_id': short_id, 'analytics': analytics})
 
                 if column[4:11] in y_ind_ids:
                     c_col_list = column.split('_')
                     if len(c_col_list) >= 3 and c_col_list[2] == 'an':
-                        y_analytics.append(self._get_analytics_description_from_short_id(c_col_list[3]))
+                        short_id = c_col_list[3]
+                        analytics = self._get_analytics_description_from_key_id(short_id)
+                        y_analytic_keys.append({'short_id': short_id, 'analytics': analytics})
 
-        return x_analytics, y_analytics
+        x_an_ids = []
+        for key_val in x_analytic_keys:
+            for an_el in key_val['analytics']:
+                if an_el['short_id'] not in x_an_ids:
+                    x_an_ids.append(an_el['short_id'])
+                    x_analytics.append(self._get_analytics_description_from_short_id(an_el['short_id']))
+
+        y_an_ids = []
+        for key_val in y_analytic_keys:
+            for an_el in key_val['analytics']:
+                if an_el['short_id'] not in y_an_ids:
+                    y_an_ids.append(an_el['short_id'])
+                    y_analytics.append(self._get_analytics_description_from_short_id(an_el['short_id']))
+
+        return x_analytics, y_analytics, x_analytic_keys, y_analytic_keys
 
 
 class PeriodicDataProcessor(DataProcessor):

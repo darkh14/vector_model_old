@@ -85,6 +85,15 @@ class Connector:
 
         return result
 
+    def read_analytics_from_key_id(self, key_id):
+        line = self._read_line('analytic_keys', {'short_id': key_id})
+
+        result = None
+        if line:
+            result = line.get('analytics')
+
+        return result
+
     def read_indicator_from_name_type(self, indicator, report_type):
         result = self._read_line('indicators', {'indicator': indicator, 'report_type': report_type})
         if result:
@@ -118,10 +127,12 @@ class Connector:
 
         self.write_model_description(model_description)
 
-    def write_model_analytics(self, model_id, x_analytics, y_analytics):
+    def write_model_analytics(self, model_id, x_analytics, y_analytics, x_analytic_keys, y_analytic_keys):
         model_description = self.read_model_description(model_id)
         model_description['x_analytics'] = x_analytics
         model_description['y_analytics'] = y_analytics
+        model_description['x_analytic_keys'] = x_analytic_keys
+        model_description['y_analytic_keys'] = y_analytic_keys
 
         self.write_model_description(model_description)
 
