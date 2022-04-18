@@ -337,30 +337,44 @@ class BaseModel:
 
     def _get_graph_bin(self, data, graph_data):
 
-        x_graph, y_graph = self._get_dataframe_for_graph(data, graph_data['x_indicator_id'],
-                                                         graph_data['y_indicator_id'])
+        x_graph, y_graph = self._get_dataframe_for_graph(data, graph_data['x_indicator'],
+                                                         graph_data['y_indicator'])
 
-        x_indicator_descr = self._data_processor.get_indicator_description_from_id(graph_data['x_indicator_id'])
-        x_label = x_indicator_descr['report_type'] + '\n' + x_indicator_descr['name']
-        y_indicator_descr = self._data_processor.get_indicator_description_from_id(graph_data['y_indicator_id'])
-        y_label = y_indicator_descr['report_type'] + '\n' + y_indicator_descr['name']
+        x_indicator_descr = self._db_connector.read_indicator_from_type_id(graph_data['x_indicator']['type'],
+                                                                           graph_data['x_indicator']['id'])
+
+        x_label = self._get_indicator_label_text(x_indicator_descr)
+
+        y_indicator_descr = self._db_connector.read_indicator_from_type_id(graph_data['y_indicator']['type'],
+                                                                           graph_data['y_indicator']['id'])
+
+        y_label = self._get_indicator_label_text(y_indicator_descr)
+
         self._make_graph(x_graph, y_graph, x_label, y_label)
 
         graph_bin = self._read_graph_file()
 
         return graph_bin
 
+    @staticmethod
+    def _get_indicator_label_text(indicator):
+        result = indicator.get('name') or indicator.get('id')
+        if indicator.get('report_type'):
+            result = indicator['report_type'] + '\n' + result
+
+        return result
+
     def _make_graph(self, x, y, x_label, y_label):
 
         x_max = max(x.max(), -(x.min()))
-        x_mul = math.floor(math.log10(x_max))
+        x_mul = math.floor(math.log10(x_max)) if x_max else 0
         x_mul = math.floor(x_mul/3)*3
         x_mul = max(x_mul, 0)
 
         x = x*10**(-x_mul)
 
         y_max = max(y.max(), -(y.min()))
-        y_mul = math.floor(math.log10(y_max))
+        y_mul = math.floor(math.log10(y_max)) if y_max else 0
         y_mul = math.floor(y_mul/3)*3
         y_mul = max(y_mul, 0)
 
@@ -370,8 +384,8 @@ class BaseModel:
 
         ax.plot(x, y) # , label='y_test')
 
-        ax.set_xlabel(x_label + '\n' + '\\ {}'.format(10**x_mul))
-        ax.set_ylabel(y_label + '\n' + '\\ {}'.format(10**y_mul))
+        ax.set_xlabel(x_label + ('\n' + '\\ {}'.format(10**x_mul) if x_mul else ''))
+        ax.set_ylabel(y_label + ('\n' + '\\ {}'.format(10**y_mul) if y_mul else ''))
         # ax.legend()
 
         fig.set_figwidth(8)  # ширина и
@@ -401,9 +415,9 @@ class BaseModel:
 
         return result
 
-    def _get_dataframe_for_graph(self, data, x_indicator_id, y_indicator_id):
+    def _get_dataframe_for_graph(self, data, x_indicator, y_indicator):
 
-        x_indicator_descr = self._data_processor.get_indicator_description_from_id(x_indicator_id)
+        x_indicator_descr = self._db_connector.read_indicator_from_type_id(x_indicator['type'], x_indicator['id'])
 
         x_columns = []
         for col in self.x_columns:
@@ -414,7 +428,7 @@ class BaseModel:
             if col_list[1] == x_indicator_descr['short_id']:
                 x_columns.append(col)
 
-        y_indicator_descr = self._data_processor.get_indicator_description_from_id(y_indicator_id)
+        y_indicator_descr = self._db_connector.read_indicator_from_type_id(y_indicator['type'], y_indicator['id'])
         y_columns = []
         for col in self.y_columns:
             col_list = col.split('_')
@@ -1351,7 +1365,7 @@ class DataProcessor:
 
     def get_indicator_description_from_id(self, indicator_id):
 
-        result = self._db_connector.read_indicator_from_id(indicator_id)
+        result = self._db_connector.read_indicator_from_type_id(indicator_id)
 
         return result
 
