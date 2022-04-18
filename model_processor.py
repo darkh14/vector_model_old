@@ -682,7 +682,7 @@ class NeuralNetworkModel(BaseModel):
         else:
             date_from = datetime.datetime.strptime(date_from, '%d.%m.%Y')
 
-        indicator_filter = [ind_data['id'] for ind_data in self.x_indicators + self.y_indicators]
+        indicator_filter = [ind_data['short_id'] for ind_data in self.x_indicators + self.y_indicators]
 
         data = self._data_processor.read_raw_data(indicator_filter, date_from)
         additional_data = {'x_indicators': self.x_indicators,
@@ -1437,7 +1437,7 @@ class DataProcessor:
         result = '', '', ''
         indicator_line = self._db_connector.read_indicator_from_short_id(short_id)
         if indicator_line:
-            result = indicator_line['name'], indicator_line['report_type'], indicator_line['id']
+            result = indicator_line['name'], indicator_line.get('report_type'), indicator_line['id']
 
         return result
 
