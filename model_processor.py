@@ -295,12 +295,19 @@ class BaseModel:
         if not extended:
             fi_pd = pd.DataFrame(fi)
             fi_pd['count'] = 1
+            fi_pd['ind'] = fi_pd.index
 
-            fi_pd = fi_pd.groupby(['indicator_name', 'report_type', 'indicator_id'], as_index=False).sum()
-            fi_pd['feature_importance'] = fi_pd['feature_importance']/fi_pd['count']
+            fi_pd_group = fi_pd.groupby(['indicator_short_id'], as_index=False).sum()
+            fi_pd_group['feature_importance'] = fi_pd['feature_importance']/fi_pd['count']
 
-            fi_pd = fi_pd.sort_values(by='feature_importance', ascending=False)
-            fi = fi_pd.to_dict('records')
+            fi_pd_ind = fi_pd[['indicator_short_id', 'ind']].groupby(['indicator_short_id'], as_index=False).min()
+
+            fi_pd_group = fi_pd_group.drop('ind', axis=1)
+            fi_pd_group = fi_pd_group.merge(fi_pd_ind, on='indicator_short_id', how='inner')
+            fi_pd_group = fi_pd_group.merge(fi_pd[['ind', 'indicator']], on='ind', how='inner')
+
+            fi_pd_group = fi_pd_group.sort_values(by='feature_importance', ascending=False)
+            fi = fi_pd_group.to_dict('records')
 
         graph_bin = None
         if get_graph:
@@ -775,14 +782,11 @@ class NeuralNetworkModel(BaseModel):
         fi = pd.DataFrame(perm.feature_importances_, columns=['feature_importance'])
         fi['feature'] = x_columns
         fi = fi.sort_values(by='feature_importance', ascending=False)
-        fi[['indicator_name', 'report_type',
-            'indicator_id']] = fi[['feature']].apply(self._data_processor.get_indicator_data_from_fi,
-                                                     axis=1,
-                                                     result_type='expand')
-        fi[['analytics_name', 'analytics_type',
-            'analytics_id']] = fi[['feature']].apply(self._data_processor.get_analytics_data_from_fi,
-                                                     axis=1,
-                                                     result_type='expand')
+
+        fi[['indicator_short_id', 'indicator']] = fi[['feature']].apply(self._data_processor.get_indicator_data_from_fi,
+                                                                        axis=1, result_type='expand')
+        fi[['analytic_key_id', 'analytics']] = fi[['feature']].apply(self._data_processor.get_analytics_data_from_fi,
+                                                                     axis=1, result_type='expand')
 
         fi = fi.to_dict('records')
         self._data_processor.write_feature_importances(self.model_id, fi)
@@ -1436,10 +1440,8 @@ class DataProcessor:
 
         result = '', '', ''
         indicator_line = self._db_connector.read_indicator_from_short_id(short_id)
-        if indicator_line:
-            result = indicator_line['name'], indicator_line.get('report_type'), indicator_line['id']
 
-        return result
+        return short_id, indicator_line
 
     def get_analytics_data_from_fi(self, column_name):
 
@@ -1452,12 +1454,9 @@ class DataProcessor:
         elif len(column_list) == 6:
             short_id = column_list[3]
 
-        result = '', '', ''
-        analytics_line = self._db_connector.read_analytics_from_short_id(short_id)
-        if analytics_line:
-            result = analytics_line['name'], analytics_line['type'], analytics_line['id']
+        analytics_line = self._db_connector.read_analytics_from_key_id(short_id)
 
-        return result
+        return short_id, analytics_line
 
     def read_raw_data(self, indicators=None, date_from=None, ad_filter=None):
         raw_data = self._db_connector.read_raw_data(indicators, date_from)
