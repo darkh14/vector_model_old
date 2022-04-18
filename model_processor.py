@@ -324,6 +324,10 @@ class BaseModel:
     def get_factor_analysis_data(self, inputs, output_indicator_id, step=0.3, get_graph=False):
         """method for getting factor analysis data"""
 
+    def _check_data(self, data, additional_parameters=None):
+        """method for checking data when predicting, ex. indicators in data and in model accordance"""
+        pass
+
     def _get_scaler(self, retrofit=False, is_out=False):
 
         if retrofit:
@@ -640,6 +644,12 @@ class NeuralNetworkModel(BaseModel):
                            'x_columns': self.x_columns,
                            'y_columns': self.y_columns}
 
+        result, errors = self._check_data(inputs)
+
+        if not result:
+            errors = [error + '\n' for error in errors]
+            raise ProcessorException(''.join(errors))
+
         # encode_fields = {'organisation': 'organisations', 'year': 'years', 'month': 'months'}
         encode_fields = None
         x, x_pd = self._data_processor.get_x_for_prediction(data, additional_data, encode_fields)
@@ -944,6 +954,27 @@ class NeuralNetworkModel(BaseModel):
 
         return output, indicators_description, graph_bin
 
+    def _check_data(self, data, additional_parameters=None):
+
+        data = pd.DataFrame(data)
+        data = self._data_processor.add_short_ids_to_raw_data(data)
+
+        errors = []
+
+        # check indicators
+        indicator_short_ids_from_data = data['indicator_short_id'].unique()
+        for ind in self.x_indicators:
+            if ind['short_id'] not in indicator_short_ids_from_data:
+                errors.append('indicator {} not found in input data'.format(ind['name']))
+
+        # check analytic keys
+        analytic_keys_short_ids_from_data = data['analytics_key_id'].unique()
+        for el in self.x_analytic_keys:
+            if el['short_id'] not in analytic_keys_short_ids_from_data:
+                errors.append('analytic key id {} not found in input data'.format(el['id']))
+
+        return not errors, errors
+
     @staticmethod
     def _create_inner_model(inputs_number, outputs_number):
 
@@ -1021,6 +1052,12 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
         if not future_periods:
             raise ProcessorException('"future_periods" not in parameters')
 
+        result, errors = self._check_data(inputs)
+
+        if not result:
+            errors = [error + '\n' for error in errors]
+            raise ProcessorException(''.join(errors))
+
         data = pd.DataFrame(inputs)
         additional_data = {'x_indicators': self.x_indicators,
                            'y_indicators': self.y_indicators,
@@ -1072,6 +1109,18 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
     @staticmethod
     def _calculate_rsme(y_true, y_pred):
         return np.sqrt(np.nanmean(np.square(y_true**2 - y_pred**2)))
+
+    def _check_data(self, data, additional_parameters=None):
+
+        result, errors = super()._check_data(data, additional_parameters)
+
+        periods = list(data['period'].unique())
+        if len(periods) < additional_parameters['past_periods']:
+            errors.append('Nodel needs {} periods to predict. '
+                          'There are only {} in inputs'.format(additional_parameters['past_periods'], len(periods)))
+            result = False
+
+        return result, errors
 
     @staticmethod
     def _calculate_mspe(y_true, y_pred):
@@ -1309,6 +1358,9 @@ class LinearModel(BaseModel):
 
         return model
 
+    def _check_data(self, data):
+        pass
+
     def get_factor_analysis_data(self, inputs, output_indicator_id, step=0.3, get_graph=False):
         return None, None, None
 
@@ -1481,7 +1533,7 @@ class DataProcessor:
 
         data = pd.DataFrame(data)
 
-        data = self._add_short_ids_to_raw_data(data)
+        data = self.add_short_ids_to_raw_data(data)
 
         data_grouped, data_grouped_values = self._prepare_dataset_group(data)
 
@@ -1587,7 +1639,7 @@ class DataProcessor:
 
         pd_data = pd.DataFrame(raw_data)
 
-        pd_data = self._add_short_ids_to_raw_data(pd_data)
+        pd_data = self.add_short_ids_to_raw_data(pd_data)
 
         pd_data['indicator'] = pd_data[['indicator', 'indicator_short_id']].apply(
             self.add_short_id_to_indicator, axis=1)
@@ -1622,7 +1674,7 @@ class DataProcessor:
 
         return pd_data, indicators, analytics, analytic_keys
 
-    def _add_short_ids_to_raw_data(self, raw_data):
+    def add_short_ids_to_raw_data(self, raw_data):
 
         raw_data['indicator_short_id'] = raw_data['indicator'].apply(self._make_short_id_from_dict)
         raw_data['analytics'] = raw_data['analytics'].apply(self._add_short_id_to_analytics)
@@ -2095,7 +2147,7 @@ class PeriodicDataProcessor(DataProcessor):
 
     def get_x_for_prediction(self, data, additional_data, encode_fields=None):
 
-        data = self._add_short_ids_to_raw_data(data)
+        data = self.add_short_ids_to_raw_data(data)
         data = self.get_data_for_fitting(data, additional_data, encode_fields=encode_fields)
 
         data = data.loc[data['period'].isin(additional_data['past_periods'])].copy()
