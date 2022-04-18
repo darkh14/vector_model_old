@@ -827,6 +827,7 @@ class NeuralNetworkModel(BaseModel):
     def get_factor_analysis_data(self, inputs, output_indicator_id, step=0.3, get_graph=False):
 
         data = pd.DataFrame(inputs)
+        data = self._data_processor.add_short_ids_to_raw_data(data)
 
         additional_data = {'x_indicators': self.x_indicators,
                            'y_indicators': self.y_indicators,
@@ -884,9 +885,9 @@ class NeuralNetworkModel(BaseModel):
                 raw_cur_data = data.copy()
 
                 if step:
-                    cur_data_ind = raw_cur_data.loc[raw_cur_data['indicator_id']==indicator_data['id']].copy()
+                    cur_data_ind = raw_cur_data.loc[raw_cur_data['indicator_short_id']==indicator_data['short_id']].copy()
                     cur_data_ind['value'] = cur_data_ind['value']*(1 + step)
-                    raw_cur_data.loc[raw_cur_data['indicator_id'] == indicator_data['id']] = cur_data_ind
+                    raw_cur_data.loc[raw_cur_data['indicator_short_id'] == indicator_data['short_id']] = cur_data_ind
 
                 encode_fields = None
                 x, x_y_pd = self._data_processor.get_x_for_prediction(raw_cur_data, additional_data, encode_fields)
