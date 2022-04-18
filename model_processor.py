@@ -961,17 +961,17 @@ class NeuralNetworkModel(BaseModel):
 
         errors = []
 
-        # check indicators
-        indicator_short_ids_from_data = data['indicator_short_id'].unique()
-        for ind in self.x_indicators:
-            if ind['short_id'] not in indicator_short_ids_from_data:
-                errors.append('indicator {} not found in input data'.format(ind['name']))
-
-        # check analytic keys
-        analytic_keys_short_ids_from_data = data['analytics_key_id'].unique()
-        for el in self.x_analytic_keys:
-            if el['short_id'] not in analytic_keys_short_ids_from_data:
-                errors.append('analytic key id {} not found in input data'.format(el['id']))
+        # # check indicators
+        # indicator_short_ids_from_data = data['indicator_short_id'].unique()
+        # for ind in self.x_indicators:
+        #     if ind['short_id'] not in indicator_short_ids_from_data:
+        #         errors.append('indicator {} not found in input data'.format(ind['name']))
+        #
+        # # check analytic keys
+        # analytic_keys_short_ids_from_data = data['analytics_key_id'].unique()
+        # for el in self.x_analytic_keys:
+        #     if el['short_id'] not in analytic_keys_short_ids_from_data:
+        #         errors.append('analytic key id {} not found in input data'.format(el['id']))
 
         return not errors, errors
 
