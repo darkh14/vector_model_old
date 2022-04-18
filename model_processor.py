@@ -42,6 +42,7 @@ class ModelProcessor:
     def __init__(self, parameters):
 
         set_db_connector(parameters)
+        self._db_connector = DB_CONNECTOR
         self._data_processor = DataProcessor()
 
         self.model = None
@@ -166,12 +167,15 @@ class ModelProcessor:
 
         return result, indicator_description, graph_data
 
-    @staticmethod
-    def _get_model(model_description):
+    def _get_model(self, model_description):
 
         need_to_update = bool(model_description.get('need_to_update'))
 
         model_type = model_description.get('type')
+        if not model_type:
+            model_type = self._data_processor.read_model_field(model_description['id'], 'type')
+            model_description['type'] = model_type
+
         if not model_type:
             raise ProcessorException('model type not in model description')
 
@@ -201,48 +205,30 @@ class BaseModel:
     def __init__(self, model_id, model_parameters):
 
         name = model_parameters.get('name') or ''
+
         x_indicators = model_parameters.get('x_indicators')
         y_indicators = model_parameters.get('y_indicators')
         need_to_update = model_parameters.get('need_to_update')
         model_filter = model_parameters.get('filter')
 
         self.model_id = model_id
+
         self._db_connector = DB_CONNECTOR
         self._data_processor = DataProcessor()
+
+        self._field_to_update = ['name', 'type', 'filter', 'x_indicators', 'y_indicators', 'periods', 'organisations',
+                                 'scenarios', 'x_columns', 'y_columns', 'x_analytics', 'y_analytics',
+                                 'x_analytic_keys', 'y_analytic_keys', 'feature_importances']
 
         description_from_db = self._data_processor.read_model_description_from_db(self.model_id)
 
         if description_from_db:
-            self.name = description_from_db['name']
-            self.filter = description_from_db.get('filter')
-            self.x_indicators = description_from_db['x_indicators']
-            self.y_indicators = description_from_db['y_indicators']
-            self.periods = description_from_db['periods']
-            self.organisations = description_from_db['organisations']
-            self.scenarios = description_from_db['scenarios']
-            self.x_columns = description_from_db['x_columns']
-            self.y_columns = description_from_db['y_columns']
-            self.x_analytics = description_from_db.get('x_analytics')
-            self.y_analytics = description_from_db.get('x_analytics')
-            self.x_analytic_keys = description_from_db.get('x_analytic_keys')
-            self.y_analytic_keys = description_from_db.get('y_analytic_keys')
-            self.feature_importances = description_from_db.get('feature_importances')
-            self.filter = description_from_db.get('filter')
+            for field in self._field_to_update:
+                setattr(self, field, description_from_db.get(field))
         else:
+            for field in self._field_to_update:
+                setattr(self, field, [])
             self.name = name
-            self.filter = None
-            self.x_indicators = []
-            self.y_indicators = []
-            self.periods = []
-            self.organisations = []
-            self.scenarios = []
-            self.x_columns = []
-            self.y_columns = []
-            self.x_analytics = []
-            self.y_analytics = []
-            self.x_analytic_keys = []
-            self.y_analytic_keys = []
-            self.feature_importances = []
             self.filter = model_filter
 
         if x_indicators:
@@ -250,6 +236,8 @@ class BaseModel:
 
         if y_indicators:
             self.y_indicators = self._data_processor.get_indicators_data_from_parameters(y_indicators)
+
+        self.type = model_parameters['type']
 
         self._inner_model = None
         self._retrofit = False
@@ -269,19 +257,7 @@ class BaseModel:
             self.organisations = organisations
             self.scenarios = scenarios
 
-            model_description = {'model_id': self.model_id,
-                                 'name': self.name,
-                                 'filter': self.filter,
-                                 'x_indicators': self.x_indicators,
-                                 'y_indicators': self.y_indicators,
-                                 'periods': self.periods,
-                                 'organisations': self.organisations,
-                                 'scenarios': self.scenarios,
-                                 'x_columns': self.x_columns,
-                                 'y_columns': self.y_columns,
-                                 'x_analytics': self.x_analytics,
-                                 'y_analytics': self.y_analytics,
-                                 'feature_importances': self.feature_importances}
+            model_description = {field: getattr(self, field) for field in self._field_to_update}
 
             self._data_processor.write_model_to_db(self.model_id, model_description)
             self.need_to_update = False
@@ -978,8 +954,13 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
         self._data_processor = PeriodicDataProcessor()
 
         model_parameters = args[1]
-        self.past_history = model_parameters.get('past_history')
-        self.future_target = model_parameters.get('future_target')
+        model_description = self._data_processor.read_model_description_from_db(model_parameters['id'])
+        if model_description:
+            self.past_history = model_description.get('past_history')
+            self.future_target = model_description.get('future_target')
+        else:
+            self.past_history = model_parameters.get('past_history')
+            self.future_target = model_parameters.get('future_target')
 
     def update_model(self, data):
         super().update_model(data)
@@ -1364,6 +1345,7 @@ class DataProcessor:
             if not result_line:
                 raise ProcessorException('indicator {}, id {} not found in indicators'.format(parameters_line.get('name'), parameters_line['id']))
             result_line.update(parameters_line)
+            result.append(result_line)
 
         return result
 
@@ -1485,7 +1467,8 @@ class DataProcessor:
 
         data = pd.DataFrame(data)
 
-        data = self._add_short_ids_to_data(data)
+        data = self._add_short_ids_to_raw_data(data)
+
         data_grouped, data_grouped_values = self._prepare_dataset_group(data)
 
         indicators = additional_data['x_indicators']
@@ -2098,7 +2081,7 @@ class PeriodicDataProcessor(DataProcessor):
 
     def get_x_for_prediction(self, data, additional_data, encode_fields=None):
 
-        data = self._add_short_ids_to_data(data)
+        data = self._add_short_ids_to_raw_data(data)
         data = self.get_data_for_fitting(data, additional_data, encode_fields=encode_fields)
 
         data = data.loc[data['period'].isin(additional_data['past_periods'])].copy()
