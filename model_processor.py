@@ -550,7 +550,7 @@ class BaseModel:
         for step in steps:
             y = dataset.loc[dataset['koef'] == step]['value_percent'].to_numpy()
             x = [(el + x_shifts[ind]) for el in list(range(len(x0)))]
-            ax.bar(x, y, width=1*len(steps) /(0.3*len(x0)), align='edge', label="{:.0f}".format(step*100) + ' %')
+            ax.bar(x, y, width=0.05*len(steps) /(0.5*len(x0)), align='edge', label="{:.0f}".format(step*100) + ' %')
             if ind > len(steps)/2 - 1 and not x_ticks_is_set:
                 ax.set_xticks(x)
                 x_ticks_is_set = True
