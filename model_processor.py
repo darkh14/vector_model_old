@@ -897,8 +897,8 @@ class NeuralNetworkModel(BaseModel):
                 encode_fields = None
                 x, x_y_pd = self._data_processor.get_x_for_prediction(raw_cur_data, additional_data, encode_fields)
 
-                columns_to_drop = self.y_columns + ['organisation', 'scenario', 'period', 'periodicity', 'year',
-                                                    'month'] + period_columns
+                columns_to_drop = self.y_columns + ['organisation', 'scenario', 'period', 'periodicity',
+                                                    'year'] + period_columns
 
                 x = x_y_pd.drop(columns_to_drop, axis=1).to_numpy()
 
@@ -912,11 +912,18 @@ class NeuralNetworkModel(BaseModel):
                 input_indicator_columns = list()
                 if indicator_data['use_analytics']:
                     for col_name in self.x_columns:
+
+                        if col_name=='month':
+                            continue
+
                         col_list = col_name.split('_')
                         if col_list[1] == indicator_data['short_id'] and len(col_list) == 4:
                             input_indicator_columns.append(col_name)
                 else:
-                    input_indicator_columns.append('ind_' + indicator_data['short_id'])
+                    col_name = 'ind_' + indicator_data['short_id']
+                    if indicator_data.get('period_number'):
+                        col_name += '_p_f{}'.format(indicator_data['period_number'])
+                    input_indicator_columns.append(col_name)
 
                 if not len(cur_data):
                     cur_data = x_y_pd.copy()
