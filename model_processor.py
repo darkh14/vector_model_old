@@ -782,6 +782,8 @@ class NeuralNetworkModel(BaseModel):
         fi['feature'] = x_columns
         fi = fi.sort_values(by='feature_importance', ascending=False)
 
+        fi = fi.loc[fi['feature']!='month'].copy()
+
         fi[['indicator_short_id', 'indicator']] = fi[['feature']].apply(self._data_processor.get_indicator_data_from_fi,
                                                                         axis=1, result_type='expand')
         fi[['analytic_key_id', 'analytics']] = fi[['feature']].apply(self._data_processor.get_analytics_data_from_fi,
