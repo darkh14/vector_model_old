@@ -161,13 +161,16 @@ class Connector:
 
         self.write_model_description(model_description)
 
-    def read_raw_data(self, indicators, date_from):
+    def read_raw_data(self, indicators, date_from, ad_filter=None):
         collection = self.get_collection('raw_data')
         db_filter = dict()
         if indicators:
             db_filter['indicator_short_id'] = {'$in': indicators}
         if date_from:
             db_filter['loading_date'] = {'$gte': datetime.strptime(date_from, '%d.%m.%Y')}
+        if ad_filter:
+            for key, value in ad_filter.items():
+                db_filter[key] = {'$in': value}
 
         return list(collection.find(db_filter))
 

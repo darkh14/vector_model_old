@@ -725,7 +725,7 @@ class NeuralNetworkModel(BaseModel):
 
         indicator_filter = [ind_data['short_id'] for ind_data in self.x_indicators + self.y_indicators]
 
-        data = self._data_processor.read_raw_data(indicator_filter, date_from=date_from)
+        data = self._data_processor.read_raw_data(indicator_filter, date_from=date_from, ad_filter=self.filter)
         if retrofit and self.need_to_update:
             raise ProcessorException('Model can not be updated when retrofit')
 
@@ -743,8 +743,7 @@ class NeuralNetworkModel(BaseModel):
 
         # encode_fields = {'organisation': 'organisations', 'year': 'years', 'month': 'months'}
         encode_fields = None
-        x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data, encode_fields,
-                                                                              self.filter)
+        x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data, encode_fields)
         x_analytics, y_analytics, x_analytic_keys, y_analytic_keys = \
             self._data_processor.get_analytics_description(x_columns + y_columns, self.x_indicators, self.y_indicators)
         self.x_columns = x_columns
@@ -1459,7 +1458,7 @@ class DataProcessor:
         return short_id, analytics_line
 
     def read_raw_data(self, indicators=None, date_from=None, ad_filter=None):
-        raw_data = self._db_connector.read_raw_data(indicators, date_from)
+        raw_data = self._db_connector.read_raw_data(indicators, date_from, ad_filter)
         return raw_data
 
     @staticmethod
@@ -1474,9 +1473,9 @@ class DataProcessor:
         model_description['model_id'] = model_id
         self._db_connector.write_model_description(model_description)
 
-    def get_x_y_for_fitting(self, data, additional_data, encode_fields=None, model_filter=None):
+    def get_x_y_for_fitting(self, data, additional_data, encode_fields=None):
 
-        data = self.get_data_for_fitting(data, additional_data, encode_fields=encode_fields, model_filter=model_filter)
+        data = self.get_data_for_fitting(data, additional_data, encode_fields=encode_fields)
 
         data = self._drop_non_numeric_columns(data, additional_data['x_indicators'] + additional_data['y_indicators'])
 
@@ -1497,12 +1496,11 @@ class DataProcessor:
 
         return x, y, x_columns, y_columns
 
-    def get_data_for_fitting(self, data, additional_data, encode_fields=None, model_filter=None):
+    def get_data_for_fitting(self, data, additional_data, encode_fields=None):
 
         data = pd.DataFrame(data)
-        if model_filter:
-            for filter_field, filter_value in model_filter.items():
-                data = data.loc[data[filter_field]==filter_value].copy()
+
+        data = self._add_month_year_to_data(data)
 
         data_grouped, data_grouped_values = self._prepare_dataset_group(data)
 
@@ -1516,7 +1514,7 @@ class DataProcessor:
         if encode_fields:
             data = self._prepare_dataset_one_hot_encode(data, additional_data, encode_fields)
 
-        data = self._process_na(data, additional_data['y_indicators'])
+        data = self._process_na(data, additional_data)
 
         return data
 
@@ -1534,6 +1532,7 @@ class DataProcessor:
         data = pd.DataFrame(data)
 
         data = self.add_short_ids_to_raw_data(data)
+        data = self._add_month_year_to_data(data)
 
         data_grouped, data_grouped_values = self._prepare_dataset_group(data)
 
@@ -1729,14 +1728,15 @@ class DataProcessor:
         dataset.rename({'analytics_key_id': 'analytics'}, axis=1, inplace=True)
 
         data_grouped_values = dataset.groupby(['indicator', 'analytics', 'organisation', 'scenario', 'period',
-                                               'periodicity'],
+                                               'periodicity', 'month', 'year'],
                                               as_index=False)
         data_grouped_values = data_grouped_values.sum()
         data_grouped_values = data_grouped_values[['indicator', 'analytics', 'organisation', 'scenario', 'period',
-                                                   'periodicity', 'value']]
+                                                   'periodicity', 'month', 'year', 'value']]
 
-        data_grouped = dataset.groupby(['organisation', 'scenario', 'period', 'periodicity'], as_index=False).max()
-        data_grouped = data_grouped[['organisation', 'scenario', 'period', 'periodicity']]
+        data_grouped = dataset.groupby(['organisation', 'scenario', 'period', 'periodicity', 'month', 'year'],
+                                       as_index=False).max()
+        data_grouped = data_grouped[['organisation', 'scenario', 'period', 'periodicity', 'month', 'year']]
 
         return data_grouped, data_grouped_values
 
@@ -1747,9 +1747,13 @@ class DataProcessor:
 
         for ind_line in indicators:
             period_shift = ind_line.get('period_shift') or 0
+            period_number = ind_line.get('period_number') or 0
+            period_accumulation = ind_line.get('period_accumulation') or 0
             if period_shift:
                 period_column = 'period_' + ('m{}'.format(-period_shift) if period_shift < 0
                                              else 'p{}'.format(period_shift))
+            elif period_number:
+                period_column = 'year'
             else:
                 period_column = 'period'
 
@@ -1767,9 +1771,15 @@ class DataProcessor:
 
                 data_str_a = data_str.loc[(data_str['analytics'] == an_el)]
 
-                data_str_a = data_str_a.groupby(['organisation', 'scenario', 'period'], as_index=False).sum()
-                if period_column != 'period':
-                    data_str_a = data_str_a.rename({'period': period_column}, axis=1)
+                data_str_a = data_str_a.groupby(['organisation', 'scenario', 'period', 'month', 'year'], as_index=False).sum()
+
+                if period_shift:
+                    data_str_a = data_str_a.drop(['year'], axis=1)
+                elif period_number:
+                    data_str_a = data_str_a.loc[data_str_a['month'] == period_number].copy()
+                    data_str_a = data_str_a.drop(['period'], axis=1)
+
+                data_str_a = data_str_a.rename({'period': period_column}, axis=1)
 
                 data_str_a = data_str_a[['organisation', 'scenario', period_column, 'value']]
 
@@ -1783,10 +1793,11 @@ class DataProcessor:
                 if period_shift:
                     column_name = '{}_p_'.format(column_name) + ('m{}'.format(-period_shift) if period_shift < 0
                                                                  else 'p{}'.format(period_shift))
+                elif period_number:
+                    column_name = '{}_p_f{}'.format(column_name, period_number)
 
                 data_pr = data_pr.rename({'value': column_name}, axis=1)
 
-        data_pr = self._add_month_year_to_data(data_pr)
         return data_pr
 
     def _prepare_dataset_add_columns_for_prediction(self, dataset, dataset_grouped_values, indicators, columns):
@@ -1796,9 +1807,13 @@ class DataProcessor:
 
         for column in columns:
 
+            if column == 'month':
+                continue
+
             col_list = column.split('_')
             with_analytics = False
             period_shift = 0
+            period_number = 0
             ind = ''
             an = ''
             if len(col_list) == 2:
@@ -1809,31 +1824,43 @@ class DataProcessor:
                     with_analytics = True
                     an = col_list[3]
                 else:
-                    period_shift = col_list[3]
-                    if period_shift[0] == 'p':
-                        period_shift = int(period_shift[1:])
-                    else:
-                        period_shift = -int(period_shift[1:])
+                    period_value = col_list[3]
+
+                    if period_value[0] == 'p':
+                        period_shift = int(period_value[1:])
+                    elif period_value[0] == 'm':
+                        period_shift = -int(period_value[1:])
+                    elif period_value[0] == 'f':
+                        period_number = int(period_value[1:])
             else:
                 ind = col_list[1]
                 an = col_list[3]
-                period_shift = col_list[5]
-                if period_shift[0] == 'p':
-                    period_shift = int(period_shift[1:])
-                else:
-                    period_shift = -int(period_shift[1:])
+                period_value = col_list[5]
+                if period_value[0] == 'p':
+                    period_shift = int(period_value[1:])
+                elif period_value[0] == 'm':
+                    period_shift = -int(period_value[1:])
+                elif period_value[0] == 'f':
+                    period_number = int(period_value[1:])
 
             if period_shift:
                 period_column = 'period_' + ('m{}'.format(-period_shift) if period_shift < 0
                                              else 'p{}'.format(period_shift))
+            elif period_number:
+                period_column = 'year'
             else:
                 period_column = 'period'
 
             data_str_a = dataset_grouped_values.loc[(dataset_grouped_values['indicator'] == ind)
                                                     & (dataset_grouped_values['analytics'] == an)]
 
-            if period_column != 'period':
-                data_str_a = data_str_a.rename({'period': period_column}, axis=1)
+            if period_shift:
+                data_str_a = data_str_a.drop(['year'], axis=1)
+            elif period_number:
+                data_str_a = data_str_a.loc[data_str_a['month'] == period_number].copy()
+                data_str_a = data_str_a.drop(['period'], axis=1)
+
+            data_str_a = data_str_a.rename({'period': period_column}, axis=1)
 
             data_str_a = data_str_a[['organisation', 'scenario', period_column, 'value']]
 
@@ -1841,7 +1868,6 @@ class DataProcessor:
 
             data_pr = data_pr.rename({'value': column}, axis=1)
 
-        data_pr = self._add_month_year_to_data(data_pr)
         return data_pr
 
     def _prepare_dataset_one_hot_encode(self, dataset, additional_data, encode_fields):
@@ -1878,7 +1904,7 @@ class DataProcessor:
     @staticmethod
     def _drop_non_numeric_columns(dataset, indicators):
 
-        columns_to_drop = ['organisation', 'scenario', 'period', 'periodicity', 'year', 'month']
+        columns_to_drop = ['organisation', 'scenario', 'period', 'periodicity', 'year']
         period_numbers = [ind_line.get('period_shift') for ind_line in indicators if ind_line.get('period_shift')]
         period_columns = []
         for period_num in period_numbers:
@@ -1891,18 +1917,54 @@ class DataProcessor:
 
         return dataset
 
-    def _process_na(self, dataset, y_indicators=None):
+    def _process_na(self, dataset, additional_data=None):
 
-        if y_indicators:
-            columns = list(dataset.columns)
+        if additional_data:
 
-            y_columns = self._get_columns_by_indicators(columns, y_indicators)
+            all_columns = list(dataset.columns)
+            period_columns = [col for col in all_columns if col.find('period_') != -1]
+            non_digit_columns = ['organisation', 'scenario', 'period',
+                                 'year', 'periodicity'] + period_columns
 
-            dataset['y_na'] = dataset[y_columns].apply(self._get_na, axis=1)
+            digit_columns = [_el for _el in all_columns if _el not in non_digit_columns]
 
-            dataset = dataset.loc[dataset['y_na'] == False]
+            x_short_ids = [_el['short_id'] for _el in additional_data['x_indicators']]
+            y_short_ids = [_el['short_id'] for _el in additional_data['y_indicators']]
 
-            dataset = dataset.drop(['y_na'], axis=1)
+            x_digit_columns = []
+            x_digit_without_month = []
+            y_digit_columns = []
+
+            for col in digit_columns:
+
+                if col == 'month':
+                    x_digit_columns.append(col)
+                else:
+
+                    col_list = col.split('_')
+
+                    if col_list[1] in x_short_ids:
+                        x_digit_columns.append(col)
+                        x_digit_without_month.append(col)
+
+                    if col_list[1] in y_short_ids:
+                        y_digit_columns.append(col)
+
+            dataset['x_not_del'] = dataset[x_digit_without_month].any(axis=1)
+            dataset['y_not_del'] = dataset[y_digit_columns].any(axis=1)
+            dataset['not_del'] = dataset[['x_not_del', 'y_not_del']].apply(lambda x: x[0] and x[1], axis=1)
+
+            dataset = dataset.loc[dataset['not_del'] == True].copy()
+
+            col_to_delete = []
+
+            for col in x_digit_without_month:
+                if not dataset[col].any():
+                    col_to_delete.append(col)
+
+            columns_not_to_del = [_el for _el in all_columns if _el not in col_to_delete]
+
+            dataset = dataset[columns_not_to_del].copy()
 
         dataset = dataset.fillna(0)
 
