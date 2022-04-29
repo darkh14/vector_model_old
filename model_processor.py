@@ -432,8 +432,11 @@ class BaseModel:
 
         x_columns = []
         for col in self.x_columns:
+            if col == 'month':
+                continue
+
             col_list = col.split('_')
-            if len(col_list)==6:
+            if len(col_list) == 6:
                 continue
 
             if col_list[1] == x_indicator_descr['short_id']:
