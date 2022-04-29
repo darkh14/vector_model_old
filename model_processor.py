@@ -349,7 +349,7 @@ class BaseModel:
     def _get_graph_bin(self, data, graph_data):
 
         x_graph, y_graph = self._get_dataframe_for_graph(data, graph_data['x_indicator'],
-                                                         graph_data['y_indicator'])
+                                                         graph_data['y_indicator'], graph_data.get('periods'))
 
         x_indicator_descr = self._db_connector.read_indicator_from_type_id(graph_data['x_indicator']['type'],
                                                                            graph_data['x_indicator']['id'])
@@ -426,7 +426,7 @@ class BaseModel:
 
         return result
 
-    def _get_dataframe_for_graph(self, data, x_indicator, y_indicator):
+    def _get_dataframe_for_graph(self, data, x_indicator, y_indicator, periods=None):
 
         x_indicator_descr = self._db_connector.read_indicator_from_type_id(x_indicator['type'], x_indicator['id'])
 
@@ -452,9 +452,13 @@ class BaseModel:
             if col_list[1] == y_indicator_descr['short_id']:
                 y_columns.append(col)
 
+        if periods:
+            data = data.loc[data['period'].isin(periods)].copy()
+
         data = data[x_columns + y_columns].copy()
 
         data['x'] = data[x_columns].apply(sum, axis=1)
+        data['x'] = data['x'].apply(round)
 
         data['y'] = data[y_columns].apply(sum, axis=1)
 
