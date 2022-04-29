@@ -2159,9 +2159,9 @@ class DataProcessor:
 
 class PeriodicDataProcessor(DataProcessor):
 
-    def get_x_y_for_fitting(self, data, additional_data, encode_fields=None, model_filter=None):
+    def get_x_y_for_fitting(self, data, additional_data, encode_fields=None):
 
-        data = self.get_data_for_fitting(data, additional_data, encode_fields=encode_fields, model_filter=model_filter)
+        data = self.get_data_for_fitting(data, additional_data, encode_fields=encode_fields)
 
         data['period_dt'] = data['period'].apply(self.get_period)
         scenarios = data['scenario'].unique()
