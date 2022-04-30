@@ -1072,7 +1072,7 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
         if not future_periods:
             raise ProcessorException('"future_periods" not in parameters')
 
-        result, errors = self._check_data(inputs)
+        result, errors = self._check_data(inputs, additional_parameters)
 
         if not result:
             errors = [error + '\n' for error in errors]
@@ -1134,8 +1134,10 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
 
         result, errors = super()._check_data(data, additional_parameters)
 
+        data = pd.DataFrame(data)
+
         periods = list(data['period'].unique())
-        if len(periods) < additional_parameters['past_periods']:
+        if len(periods) < len(additional_parameters['past_periods']):
             errors.append('Nodel needs {} periods to predict. '
                           'There are only {} in inputs'.format(additional_parameters['past_periods'], len(periods)))
             result = False
