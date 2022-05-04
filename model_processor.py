@@ -11,7 +11,7 @@ import json
 
 from job_processor import JobProcessor
 
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
 from keras.wrappers.scikit_learn import KerasRegressor
@@ -216,7 +216,9 @@ class BaseModel:
         self._db_connector = DB_CONNECTOR
         self._data_processor = DataProcessor()
 
-        self._field_to_update = ['name', 'type', 'filter', 'x_indicators', 'y_indicators', 'periods', 'organisations',
+        self.is_fit = False
+
+        self._field_to_update = ['name', 'type', 'is_fit', 'filter', 'x_indicators', 'y_indicators', 'periods', 'organisations',
                                  'scenarios', 'x_columns', 'y_columns', 'x_analytics', 'y_analytics',
                                  'x_analytic_keys', 'y_analytic_keys', 'feature_importances']
 
@@ -230,6 +232,8 @@ class BaseModel:
                 setattr(self, field, [])
             self.name = name
             self.filter = model_filter
+
+            self.is_fit = False
 
         if x_indicators:
             self.x_indicators = self._data_processor.get_indicators_data_from_parameters(x_indicators)
@@ -650,7 +654,9 @@ class NeuralNetworkModel(BaseModel):
     def predict(self, inputs, get_graph=False, graph_data=None, additional_parameters=None):
 
         data = pd.DataFrame(inputs)
-        additional_data = {'x_indicators': self.x_indicators,
+
+        additional_data = {'model_id': self.model_id,
+                           'x_indicators': self.x_indicators,
                            'y_indicators': self.y_indicators,
                            'periods': self.periods,
                            'organisations': self.organisations,
@@ -738,7 +744,8 @@ class NeuralNetworkModel(BaseModel):
 
         self.update_model(data)
 
-        additional_data = {'x_indicators': self.x_indicators,
+        additional_data = {'model_id': self.model_id,
+                           'x_indicators': self.x_indicators,
                            'y_indicators': self.y_indicators,
                            'periods': self.periods,
                            'organisations': self.organisations,
@@ -779,6 +786,9 @@ class NeuralNetworkModel(BaseModel):
 
         self._data_processor.write_model_field(self.model_id, 'rsme', rmse)
         self._data_processor.write_model_field(self.model_id, 'mspe', mspe)
+
+        self.is_fit = True
+        self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
 
         self._data_processor.write_inner_model(self.model_id, self._inner_model)
 
@@ -981,6 +991,9 @@ class NeuralNetworkModel(BaseModel):
 
         errors = []
 
+        if not self.is_fit:
+            raise ProcessorException('Model is not fit. Prediction is impossible!')
+
         # # check indicators
         # indicator_short_ids_from_data = data['indicator_short_id'].unique()
         # for ind in self.x_indicators:
@@ -1079,7 +1092,11 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
             raise ProcessorException(''.join(errors))
 
         data = pd.DataFrame(inputs)
-        additional_data = {'x_indicators': self.x_indicators,
+
+        scaler = self._data_processor.read_scaler(self.model_id)
+        additional_data = {'model_id': self.model_id,
+                           'scaler': scaler,
+                           'x_indicators': self.x_indicators,
                            'y_indicators': self.y_indicators,
                            'periods': self.periods,
                            'organisations': self.organisations,
@@ -1098,19 +1115,38 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
 
         inner_model = self._get_inner_model(retrofit=True)
 
-        y = inner_model.predict(x)
+        y_sc = inner_model.predict(x)
 
-        y = y.flatten().tolist()
+        x_columns_ind = [el for el in self.x_columns if el != 'month']
+
+        y_add = np.zeros((y_sc.shape[1], len(x_columns_ind)))
+
+        indexes = list()
+        for ind in range(len(x_columns_ind)):
+            if x_columns_ind[ind] in self.y_columns:
+                y_ind = self.y_columns.index(x_columns_ind[ind])
+                y_add[:, ind] = y_sc[y_ind]
+                indexes.append(ind)
+
+        y_add = scaler.inverse_transform(y_add)
+        y = list()
+        for ind in indexes:
+            y.append(y_add[:, ind])
+
+        y = np.array(y)
+        # y = y.flatten().tolist()
 
         graph_bin = None
 
         if get_graph:
-            graph_bin = self._get_graph_bin(y, graph_data)
+            graph_bin = self._get_graph_bin(y[0], graph_data)
 
         description = {'x_indicators': self.x_indicators,
                        'y_indicators': self.y_indicators,
                        'x_analytics': self.x_analytics,
                        'y_analytics': self.y_analytics}
+
+        y = y[0].tolist()
 
         return y, description, graph_bin
 
@@ -2166,35 +2202,53 @@ class PeriodicDataProcessor(DataProcessor):
         data = self.get_data_for_fitting(data, additional_data, encode_fields=encode_fields)
 
         data['period_dt'] = data['period'].apply(self.get_period)
+
+        x_columns = [el for el in list(data.columns) if el[:4] == 'ind_' or el == 'month']
+        x_columns_ind = [el for el in x_columns if el != 'month']
+        y_columns = ['ind_{}'.format(ind_line['short_id']) for ind_line in additional_data['y_indicators']]
+
+        data_sc = data.copy()
+
+        x_sc = data_sc[x_columns_ind].to_numpy()
+
+        scaler = StandardScaler()
+        scaler.fit(x_sc)
+
+        self.write_scaler(additional_data['model_id'], scaler)
+
+        x_sc = scaler.transform(x_sc)
+
+        data_sc[x_columns_ind] = x_sc
+
+        organisations = data['organisation'].unique()
         scenarios = data['scenario'].unique()
 
-        x, y = None, None
-        x_columns = [el for el in list(data.columns) if el[:4]=='ind_']
-        y_columns = ['ind_{}'.format(ind_line['short_id']) for ind_line in additional_data['y_indicators']]
-        # x_columns = [el for el in ind_columns if el not in y_columns]
+        x, y = np.array(list()), np.array(list())
 
-        for scenario in scenarios:
+        for organisation in organisations:
 
-            data_sc = data.loc[data['scenario']==scenario].copy()
-            data_sc = data_sc.sort_values('period_dt')
-            # data_sc = data_sc[ind_columns]
-            x_data = data_sc[x_columns].values
-            y_data = data_sc[y_columns].values
+            for scenario in scenarios:
 
-            if data_sc.shape[0] >= additional_data['past_history'] + additional_data['future_target']:
-                x_sc, y_sc = self.multivariate_data(x_data, y_data, 0,
-                                                    data_sc.shape[0] - additional_data['future_target'],
-                                                    additional_data['past_history'],
-                                                    additional_data['future_target'], 1)
-                if x:
-                    x = np.concatenate((x, x_sc), axis=0)
-                else:
-                    x = x_sc
+                data_el = data_sc.loc[(data_sc['organisation']==organisation) & (data_sc['scenario']==scenario)].copy()
+                data_el = data_el.sort_values('period_dt')
 
-                if y:
-                    y = np.concatenate((y, y_sc), axis=0)
-                else:
-                    y = y_sc
+                x_data = data_el[x_columns].values
+                y_data = data_el[y_columns].values
+
+                if data_el.shape[0] >= additional_data['past_history'] + additional_data['future_target']:
+                    x_sc, y_sc = self.multivariate_data(x_data, y_data, 0,
+                                                        data_el.shape[0] - additional_data['future_target'],
+                                                        additional_data['past_history'],
+                                                        additional_data['future_target'], 1)
+                    if x.any():
+                        x = np.concatenate((x, x_sc), axis=0)
+                    else:
+                        x = x_sc
+
+                    if y.any():
+                        y = np.concatenate((y, y_sc), axis=0)
+                    else:
+                        y = y_sc
 
         return x, y, x_columns, y_columns
 
@@ -2233,6 +2287,13 @@ class PeriodicDataProcessor(DataProcessor):
         data = data.loc[data['period'].isin(additional_data['past_periods'])].copy()
 
         data['period_dt'] = data['period'].apply(self.get_period)
+
+        organisations = data['organisation'].unique()
+
+        if len(organisations) != 1:
+            raise ProcessorException('Periodic model needs data with one organisation for prediction,' +
+                                     'but now data contains {} organisations'.format(organisations))
+
         scenarios = data['scenario'].unique()
 
         if len(scenarios) != 1:
@@ -2241,7 +2302,16 @@ class PeriodicDataProcessor(DataProcessor):
 
         data = data.sort_values('period_dt')
 
-        x_data = data[additional_data['x_columns']].values
+        x_columns_ind = [el for el in additional_data['x_columns'] if el != 'month']
+
+        data_sc = data.copy()
+
+        x_sc = data_sc[x_columns_ind]
+        x_sc = additional_data['scaler'].transform(x_sc)
+
+        data_sc[x_columns_ind] = x_sc
+
+        x_data = data_sc[additional_data['x_columns']].values
 
         x, y = self.multivariate_data(x_data, np.array(list()), 0,
                                       data.shape[0]+1,
