@@ -16,11 +16,12 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
 from tensorflow.python.keras.wrappers.scikit_learn import KerasRegressor
 import eli5
-import tensorflow as tf
+
 from eli5.sklearn import PermutationImportance
-from tensorflow.python.keras.models import Sequential, clone_model
-from tensorflow.python.keras.layers import Dense
-from tensorflow.python.keras import optimizers
+from tensorflow.keras.models import Sequential, clone_model
+from tensorflow.keras.layers import Dense
+from tensorflow.keras import optimizers
+import tensorflow as tf
 
 from tensorflow import keras
 
@@ -643,6 +644,8 @@ class NeuralNetworkModel(BaseModel):
 
         inner_model.compile(optimizer=optimizers.Adam(learning_rate=0.001), loss='MeanSquaredError',
                             metrics=['RootMeanSquaredError'])
+
+        optimizers
         history = inner_model.fit(x, y, epochs=self._epochs, verbose=2, validation_split=self._validation_split)
 
         self._inner_model = inner_model
