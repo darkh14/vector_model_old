@@ -214,11 +214,11 @@ class Connector:
 
         collection = self._collections.get(collection_name)
 
-        if not collection:
+        if collection is None:
             collection = self._db.get_collection(collection_name)
             self._collections[collection_name] = collection
 
-        if not collection:
+        if collection is None:
             raise ProcessorException('collection {} not found in db {}'.format(collection_name, self.db_name))
 
         return collection
