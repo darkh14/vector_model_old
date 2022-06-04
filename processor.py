@@ -101,8 +101,7 @@ class Processor:
 
         return [output_str]
 
-    @staticmethod
-    def _requests_methods():
+    def _requests_methods(self):
         result = dict()
         result['model_load_data'] = model_processor.load_data
         result['model_fit'] = model_processor.fit
@@ -110,8 +109,10 @@ class Processor:
         result['model_calculate_feature_importances'] = model_processor.calculate_feature_importances
         result['model_get_feature_importances'] = model_processor.get_feature_importances
         result['model_get_rsme'] = model_processor.get_rsme
+        result['model_get_factor_analysis_data'] = model_processor.get_factor_analysis_data
         result['job_get_state'] = job_processor.job_get_state
         result['job_delete'] = job_processor.job_delete
+        result['ping'] = self.ping
 
         return result
 
@@ -124,6 +125,10 @@ class Processor:
 
         x_str = x_str.encode('utf-8-sig')
         return json.loads(x_str)
+
+    @staticmethod
+    def ping(parameters):
+        return {'status': 'OK', 'error_text': '', 'description': 'ping OK'}
 
 
 def process(environ, start_response=None):

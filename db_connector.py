@@ -1,7 +1,7 @@
 import pymongo
 from logger import ProcessorException as ProcessorException
 import settings_controller
-import numpy as np
+import hashlib
 
 from datetime import datetime
 
@@ -64,10 +64,33 @@ class Connector:
 
         print('---Loading raw data started---')
 
-    def read_indicator_from_id(self, indicator_id):
-        result = self._read_line('indicators', {'indicator_id': indicator_id})
+    def read_indicator_from_type_id(self, indicator_type, indicator_id):
+        result = self._read_line('indicators', {'type': indicator_type, 'id': indicator_id})
         if result:
             result.pop('_id')
+
+        return result
+
+    def read_indicator_from_short_id(self, indicator_id):
+        result = self._read_line('indicators', {'short_id': indicator_id})
+        if result:
+            result.pop('_id')
+
+        return result
+
+    def read_analytics_from_short_id(self, analytics_id):
+        result = self._read_line('analytics', {'short_id': analytics_id})
+        if result:
+            result.pop('_id')
+
+        return result
+
+    def read_analytics_from_key_id(self, key_id):
+        line = self._read_line('analytic_keys', {'short_id': key_id})
+
+        result = None
+        if line:
+            result = line.get('analytics')
 
         return result
 
@@ -78,20 +101,38 @@ class Connector:
 
         return result
 
-    def write_indicator(self, indicator_id, indicator, report_type):
-        line = {'indicator_id': indicator_id, 'indicator': indicator, 'report_type': report_type}
-        self._write_line('indicators', line, selections=['indicator_id'])
+    def write_indicator(self, indicator):
+        self._write_line('indicators', indicator, selections=['id'])
+
+    def write_analytic(self, analytic):
+        self._write_line('analytics', analytic, selections=['id', 'type'])
+
+    def write_analytic_key(self, analytic_key):
+        self._write_line('analytic_keys', analytic_key, selections=['short_id'])
 
     def read_model_description(self, model_id):
         return self._read_line('models', {'model_id': model_id})
 
     def write_model_description(self, model_description):
+        db_model_description = self.read_model_description(model_description['model_id'])
+        if db_model_description:
+            db_model_description.update(model_description)
+            model_description = db_model_description
         self._write_line('models', model_description, ['model_id'])
 
     def write_model_columns(self, model_id, x_columns, y_columns):
         model_description = self.read_model_description(model_id)
         model_description['x_columns'] = x_columns
         model_description['y_columns'] = y_columns
+
+        self.write_model_description(model_description)
+
+    def write_model_analytics(self, model_id, x_analytics, y_analytics, x_analytic_keys, y_analytic_keys):
+        model_description = self.read_model_description(model_id)
+        model_description['x_analytics'] = x_analytics
+        model_description['y_analytics'] = y_analytics
+        model_description['x_analytic_keys'] = x_analytic_keys
+        model_description['y_analytic_keys'] = y_analytic_keys
 
         self.write_model_description(model_description)
 
@@ -120,13 +161,16 @@ class Connector:
 
         self.write_model_description(model_description)
 
-    def read_raw_data(self, indicators, date_from):
+    def read_raw_data(self, indicators, date_from, ad_filter=None):
         collection = self.get_collection('raw_data')
         db_filter = dict()
         if indicators:
-            db_filter['indicator_id'] = {'$in': indicators}
+            db_filter['indicator_short_id'] = {'$in': indicators}
         if date_from:
             db_filter['loading_date'] = {'$gte': datetime.strptime(date_from, '%d.%m.%Y')}
+        if ad_filter:
+            for key, value in ad_filter.items():
+                db_filter[key] = {'$in': value}
 
         return list(collection.find(db_filter))
 
@@ -170,14 +214,21 @@ class Connector:
 
         collection = self._collections.get(collection_name)
 
-        if not collection:
+        if collection is None:
             collection = self._db.get_collection(collection_name)
             self._collections[collection_name] = collection
 
-        if not collection:
+        if collection is None:
             raise ProcessorException('collection {} not found in db {}'.format(collection_name, self.db_name))
 
         return collection
+
+    @staticmethod
+    def get_short_id(data_str):
+        if not data_str.replace(' ', ''):
+            return ''
+        data_hash = hashlib.md5(data_str.encode())
+        return data_hash.hexdigest()[-7:]
 
     def _connect(self, **kwargs):
 

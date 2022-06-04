@@ -42,8 +42,8 @@ class Controller:
         db_id = self.dbs.get(db)
 
         if not db_id:
-            new_id = get_id()
-            self.dbs[db] = 'vm_' + new_id
+            db_id = 'vm_' + get_id()
+            self.dbs[db] = db_id
         try:
             with open('cfg/db.ini', 'w', encoding='utf-8') as f:
                 json.dump(self.dbs, f)

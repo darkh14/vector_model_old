@@ -1,1 +1,0 @@
-{"request_type": "job_delete","service_name": "vector_model","db": "Srvr=\"nfp-dev1\";Ref=\"uh_vector_model\";","filter": {"job_id":  "b4a9377e-c454-4fbc-ab05-aa83062cdb59"}}
