@@ -35,17 +35,18 @@ class Connector:
         if initialize:
             self.initialize()
 
-    def write_raw_data(self, raw_data, model_name='', overwrite=False):
+    def write_raw_data(self, raw_data, overwrite=False, append=False):
         print('---Loading raw data started---')
         collection = self.get_collection('raw_data')
 
         for line in raw_data:
             line['loading_date'] = datetime.now()
 
-        if overwrite:
-            print('---Removing old data---')
-            collection.drop()
-            print('---Removing old data - finished --')
+        if overwrite or append:
+            if not append:
+                print('---Removing old data---')
+                collection.drop()
+                print('---Removing old data - finished --')
             print('---Inserting new data---')
             collection.insert_many(raw_data)
             print('---Inserting new data - finished--')
@@ -160,6 +161,52 @@ class Connector:
         model_description[field_name] = value
 
         self.write_model_description(model_description)
+
+    def write_loading(self, loading):
+        self._write_line('loadings', loading, ['id'])
+
+    def write_package(self, package):
+        self._write_line('packages', package, ['loading_id', 'id'])
+
+    def write_packages(self, packages):
+
+        for package in packages:
+            self._write_line('packages', package, ['loading_id', 'id'])
+
+    def read_package(self, loading_id, package_id):
+        collection = self.get_collection('packages')
+
+        packages = list(collection.find({'loading_id': loading_id, 'id': package_id}))
+
+        package = None
+        if packages is not None and len(packages):
+            package = packages[0]
+            package.pop('_id')
+
+        return package
+
+    def read_loading_packages(self, loading_id):
+        collection = self.get_collection('packages')
+
+        packages = list(collection.find({'loading_id': loading_id}))
+
+        if packages is not None and len(packages):
+            for package in packages:
+                package.pop('_id')
+
+        return packages
+
+    def read_loading(self, loading_id):
+        collection = self.get_collection('loadings')
+
+        loadings = list(collection.find({'id': loading_id}))
+
+        loading = None
+        if loadings is not None and len(loadings):
+            loading = loadings[0]
+            loading.pop('_id')
+
+        return loading
 
     def read_raw_data(self, indicators, date_from, ad_filter=None):
         collection = self.get_collection('raw_data')

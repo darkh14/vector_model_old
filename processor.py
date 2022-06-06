@@ -5,6 +5,7 @@ import sys
 sys.path.append('./VectorModel')
 import model_processor
 import job_processor
+import data_loader
 from logger import ProcessorException as ProcessorException
 from settings_controller import Controller
 import traceback
@@ -103,7 +104,8 @@ class Processor:
 
     def _requests_methods(self):
         result = dict()
-        result['model_load_data'] = model_processor.load_data
+
+        result['data_load_package'] = data_loader.load_package
         result['model_fit'] = model_processor.fit
         result['model_predict'] = model_processor.predict
         result['model_calculate_feature_importances'] = model_processor.calculate_feature_importances
