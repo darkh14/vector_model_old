@@ -27,14 +27,117 @@ class LoadingProcessor:
             self._packages = self._get_packages_from_db()
 
         fields = ['id', 'status', 'number', 'start_date', 'end_date', 'quantity_of_objects', 'data']
-        self._current_package = {field: parameters['package_' + field] for field in fields}
-        if parameters['package_start_date']:
-            self._current_package['start_date'] = datetime.datetime.strptime(parameters['package_start_date'],
-                                                                             '%d.%m.%Y %H:%M:%S')
-        if parameters['package_end_date']:
-            self._current_package['end_date'] = datetime.datetime.strptime(parameters['package_end_date'],
-                                                                           '%d.%m.%Y %H:%M:%S')
+        if parameters.get('package_id'):
+            self._current_package = {field: parameters['package_' + field] for field in fields}
+            if parameters['package_start_date']:
+                self._current_package['start_date'] = datetime.datetime.strptime(parameters['package_start_date'],
+                                                                                 '%d.%m.%Y %H:%M:%S')
+            if parameters['package_end_date']:
+                self._current_package['end_date'] = datetime.datetime.strptime(parameters['package_end_date'],
+                                                                               '%d.%m.%Y %H:%M:%S')
+        else:
+            self._current_package = None
+
+        self._do_not_check = parameters.get('do_not_check')
+        if not self._do_not_check:
+            self._check_loading()
+
+    def load_package_data(self, package_data=None):
+
+        self._set_package_status('in_process')
+
+        overwrite = self._loading_parameters['status'] == 'registered' \
+                    and self._loading_parameters['type'] == 'full'
+        append = not self._loading_parameters['status'] == 'registered' \
+                    and self._loading_parameters['type'] == 'full'
+
+        raw_data = package_data or self._current_package['data']
+
+        if not raw_data:
+            raise ProcessorException('Package data is not found')
+
+        pd_data, indicators, analytics, analytic_keys = self._preprocess_raw_data(raw_data)
+
+        for indicator_el in indicators:
+            self._db_connector.write_indicator(indicator_el)
+
+        for analytic_el in analytics:
+            self._db_connector.write_analytic(analytic_el)
+
+        for analytic_key in analytic_keys:
+            self._db_connector.write_analytic_key(analytic_key)
+
+        raw_data = pd_data.to_dict('records')
+        self._db_connector.write_raw_data(raw_data, overwrite=overwrite, append=append)
+
+        self._set_package_status('loaded')
+
+        current_package = self._current_package.copy()
+        current_package.pop('data')
+        result_info = {'loading': self._loading_parameters, 'packages': self._packages,
+                       'current_package': current_package}
+        return self._replace_date_to_str_in_info(result_info)
+
+    def get_loading_info(self, loading_id):
+
+        result_info = {'loading': self._loading_parameters, 'packages': self._packages}
+        return self._replace_date_to_str_in_info(result_info)
+
+    def set_loading_parameters(self, loading):
+
+        if loading.get('start_date'):
+            loading['start_date'] = datetime.datetime.strptime(loading['start_date'], '%d.%m.%Y %H:%M:%S')
+        if loading.get('end_date'):
+            loading['end_date'] = datetime.datetime.strptime(loading['end_date'], '%d.%m.%Y %H:%M:%S')
+
+        current_loading = self._db_connector.read_loading(loading['id'])
+        if current_loading:
+            current_loading.update(loading)
+        else:
+            current_loading = loading
+
+        self._loading_parameters = current_loading
         self._check_loading()
+
+        self._db_connector.write_loading(current_loading)
+
+    def set_package_parameters(self, package):
+
+        if package.get('start_date'):
+            package['start_date'] = datetime.datetime.strptime(package['start_date'], '%d.%m.%Y %H:%M:%S')
+        if package.get('end_date'):
+            package['end_date'] = datetime.datetime.strptime(package['end_date'], '%d.%m.%Y %H:%M:%S')
+
+        current_index = -1
+        for ind in range(len(self._packages)):
+            if self._packages[ind]['id'] == package['id']:
+                current_index = ind
+                break
+
+        if package.get('remove'):
+            if current_index != - 1:
+                self._packages.pop(current_index)
+
+            self._check_loading()
+            self._db_connector.delete_package(package)
+        else:
+            if current_index != - 1:
+                current_package = self._packages[current_index]
+                current_package.update(package)
+            else:
+                current_package = package
+                self._packages.append(current_package)
+
+            self._check_loading()
+            self._db_connector.write_package(current_package)
+
+    def delete_loading_parameters(self):
+        self._db_connector.delete_loading(self.loading_id)
+
+        self.loading_id = ''
+        self._loading_parameters = None
+        self._current_package = None
+        self._packages = None
 
     def _get_loading_parameters_from_db(self):
         return self._db_connector.read_loading(self.loading_id)
@@ -80,6 +183,9 @@ class LoadingProcessor:
 
     def _check_loading(self):
 
+        if not self._do_not_check:
+            return
+
         if self._new_loading:
             if self._loading_parameters['status'] != 'registered':
                 raise ProcessorException('Status must be '
@@ -96,36 +202,6 @@ class LoadingProcessor:
 
                 if errors:
                     raise ProcessorException('All packages must be in status "registered"')
-
-    def load_package_data(self, package_data=None):
-
-        self._set_package_status('in_process')
-
-        overwrite = self._loading_parameters['status'] == 'registered' \
-                    and self._loading_parameters['type'] == 'full'
-        append = not self._loading_parameters['status'] == 'registered' \
-                    and self._loading_parameters['type'] == 'full'
-
-        raw_data = package_data or self._current_package['data']
-
-        if not raw_data:
-            raise ProcessorException('Package data is not found')
-
-        pd_data, indicators, analytics, analytic_keys = self._preprocess_raw_data(raw_data)
-
-        for indicator_el in indicators:
-            self._db_connector.write_indicator(indicator_el)
-
-        for analytic_el in analytics:
-            self._db_connector.write_analytic(analytic_el)
-
-        for analytic_key in analytic_keys:
-            self._db_connector.write_analytic_key(analytic_key)
-
-        raw_data = pd_data.to_dict('records')
-        self._db_connector.write_raw_data(raw_data, overwrite=overwrite, append=append)
-
-        self._set_package_status('loaded')
 
     def _preprocess_raw_data(self, raw_data):
 
@@ -208,10 +284,22 @@ class LoadingProcessor:
 
     def _set_package_status(self, status):
 
+        current_date = datetime.datetime.now()
+
         self._current_package['status'] = status
+        if status == 'in_process':
+            self._current_package['start_date'] = current_date
+            self._current_package['end_date'] = ''
+        elif status == 'loaded':
+            self._current_package['end_date'] = current_date
+        elif status == 'registered':
+            self._current_package['start_date'] = ''
+            self._current_package['end_date'] = ''
+
         package = self._current_package.copy()
         package['loading_id'] = self.loading_id
         package.pop('data')
+
         self._db_connector.write_package(package)
 
         if status == 'registered':
@@ -219,16 +307,23 @@ class LoadingProcessor:
             for package in self._packages:
                 package['status'] = status
                 package['loading_id'] = self.loading_id
+                package['start_date'] = ''
+                package['end_date'] = ''
 
             self._db_connector.write_packages(self._packages)
 
             self._loading_parameters['status'] = status
+            self._loading_parameters['start_date'] = ''
+            self._loading_parameters['end_date'] = ''
+
             self._db_connector.write_loading(self._loading_parameters)
 
         elif status == 'in_process':
 
             if self._loading_parameters['status'] != status:
                 self._loading_parameters['status'] = status
+                self._loading_parameters['start_date'] = current_date
+                self._loading_parameters['end_date'] = ''
                 self._db_connector.write_loading(self._loading_parameters)
 
         elif status == 'loaded':
@@ -236,6 +331,7 @@ class LoadingProcessor:
             not_loaded_packages = list(filter(lambda x: x['status'] != 'loaded', self._packages))
             if not not_loaded_packages:
                 self._loading_parameters['status'] = status
+                self._loading_parameters['end_date'] = current_date
                 self._db_connector.write_loading(self._loading_parameters)
 
         elif status == 'error':
@@ -243,15 +339,88 @@ class LoadingProcessor:
             self._loading_parameters['status'] = status
             self._db_connector.write_loading(self._loading_parameters)
 
+    def _replace_date_to_str_in_info(self, loading_info):
+        loading_info['loading']['start_date'] = self._date_to_str(loading_info['loading']['start_date'])
+        loading_info['loading']['end_date'] = self._date_to_str(loading_info['loading']['end_date'])
+
+        if loading_info.get('current_package'):
+            loading_info['current_package']['start_date'] = self._date_to_str(loading_info['current_package']['start_date'])
+            loading_info['current_package']['end_date'] = self._date_to_str(loading_info['current_package']['end_date'])
+
+        for package in loading_info['packages']:
+            package['start_date'] = self._date_to_str(package['start_date'])
+            package['end_date'] = self._date_to_str(package['end_date'])
+
+        return loading_info
+
+    @staticmethod
+    def _date_to_str(date):
+        result = ''
+        if date:
+            result = date.strftime('%d.%m.%Y %H:%M:%S')
+        return result
+
+
 def load_package(parameters):
 
     if not parameters.get('loading_id'):
         raise ProcessorException('parameter "loading_id" is not found in parameters')
 
     loading = LoadingProcessor(parameters['loading_id'], parameters)
-    loading.load_package_data()
+    loading_info = loading.load_package_data()
 
-    return {'status': 'OK', 'error_text': '', 'description': 'package loaded'}
+    return {'status': 'OK', 'error_text': '', 'description': 'package loaded', 'result_info': loading_info}
+
+
+def get_loading_info(parameters):
+
+    if not parameters.get('loading_id'):
+        raise ProcessorException('parameter "loading_id" is not found in parameters')
+
+    loading = LoadingProcessor(parameters['loading_id'], parameters)
+    loading_info = loading.get_loading_info(parameters['loading_id'])
+
+    return {'status': 'OK', 'error_text': '', 'description': 'loading info get',
+            'result_info': loading_info}
+
+
+def set_loading_parameters(parameters):
+
+    if not parameters.get('loading_id'):
+        raise ProcessorException('parameter "loading_id" is not found in parameters')
+
+    if not parameters.get('loading'):
+        raise ProcessorException('parameter "loading" is not found in parameters')
+
+    loading = LoadingProcessor(parameters['loading_id'], parameters)
+    loading.set_loading_parameters(parameters['loading'])
+
+    return {'status': 'OK', 'error_text': '', 'description': 'loading parameters set'}
+
+
+def set_package_parameters(parameters):
+
+    if not parameters.get('loading_id'):
+        raise ProcessorException('parameter "loading_id" is not found in parameters')
+
+    if not parameters.get('package'):
+        raise ProcessorException('parameter "package" is not found in parameters')
+
+    loading = LoadingProcessor(parameters['loading_id'], parameters)
+    loading.set_package_parameters(parameters['package'])
+
+    return {'status': 'OK', 'error_text': '', 'description': 'loading parameters set'}
+
+
+def delete_loading_parameters(parameters):
+
+    if not parameters.get('loading_id'):
+        raise ProcessorException('parameter "loading_id" is not found in parameters')
+
+    loading = LoadingProcessor(parameters['loading_id'], parameters)
+    loading.delete_loading_parameters()
+
+    return {'status': 'OK', 'error_text': '', 'description': 'loading parameters removed'}
 
 
 def set_db_connector(parameters):

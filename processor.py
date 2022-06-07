@@ -115,6 +115,10 @@ class Processor:
         result['job_get_state'] = job_processor.job_get_state
         result['job_delete'] = job_processor.job_delete
         result['ping'] = self.ping
+        result['data_get_loading_info'] = data_loader.get_loading_info
+        result['data_set_loading_parameters'] = data_loader.set_loading_parameters
+        result['data_set_package_parameters'] = data_loader.set_package_parameters
+        result['data_delete_loading_parameters'] = data_loader.delete_loading_parameters
 
         return result
 

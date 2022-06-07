@@ -168,6 +168,10 @@ class Connector:
     def write_package(self, package):
         self._write_line('packages', package, ['loading_id', 'id'])
 
+    def delete_package(self, package):
+        lines_filter = {'loading_id': package['loading_id'], 'id': package['id']}
+        self._delete_lines('packages', lines_filter)
+
     def write_packages(self, packages):
 
         for package in packages:
@@ -207,6 +211,10 @@ class Connector:
             loading.pop('_id')
 
         return loading
+
+    def delete_loading(self, loading_id):
+        self._delete_lines('loadings', {'id': loading_id})
+        self._delete_lines('packages', {'loading_id': loading_id})
 
     def read_raw_data(self, indicators, date_from, ad_filter=None):
         collection = self.get_collection('raw_data')
@@ -366,6 +374,10 @@ class Connector:
         if not del_filter:
             del_filter = dict()
         collection.delete_many(del_filter)
+
+    def _drop_collection(self, collection_name):
+        collection = self.get_collection(collection_name)
+        collection.drop()
 
     @staticmethod
     def _numpy_to_list_of_dicts(np_array):
