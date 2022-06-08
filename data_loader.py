@@ -4,6 +4,7 @@ import hashlib
 
 import db_connector
 from logger import ProcessorException
+from job_processor import JobProcessor
 
 DB_CONNECTOR = None
 
@@ -377,6 +378,7 @@ class LoadingProcessor:
         return result
 
 
+@JobProcessor.job_processing
 def load_package(parameters):
 
     if not parameters.get('loading_id'):
