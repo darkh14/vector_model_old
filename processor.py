@@ -119,6 +119,7 @@ class Processor:
         result['data_set_loading_parameters'] = data_loader.set_loading_parameters
         result['data_set_package_parameters'] = data_loader.set_package_parameters
         result['data_delete_loading_parameters'] = data_loader.delete_loading_parameters
+        result['data_initialize_loading'] = data_loader.initialize_loading
 
         return result
 

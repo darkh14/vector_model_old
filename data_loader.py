@@ -19,31 +19,31 @@ class LoadingProcessor:
         self._db_connector = DB_CONNECTOR
 
         self._loading_parameters = self._get_loading_parameters_from_db()
+        self._current_package = None
 
-        self._new_loading = False
-        if not self._loading_parameters:
-            self._initialize_loading_in_db(parameters)
-            self._new_loading = True
-        else:
+        self._new_loading = not self._loading_parameters
+        if not self._new_loading:
             self._packages = self._get_packages_from_db()
-
-        fields = ['id', 'status', 'number', 'start_date', 'end_date', 'quantity_of_objects', 'data']
-        if parameters.get('package_id'):
-            self._current_package = {field: parameters['package_' + field] for field in fields}
-            if parameters['package_start_date']:
-                self._current_package['start_date'] = datetime.datetime.strptime(parameters['package_start_date'],
-                                                                                 '%d.%m.%Y %H:%M:%S')
-            if parameters['package_end_date']:
-                self._current_package['end_date'] = datetime.datetime.strptime(parameters['package_end_date'],
-                                                                               '%d.%m.%Y %H:%M:%S')
-        else:
-            self._current_package = None
 
         self._do_not_check = parameters.get('do_not_check')
         if not self._do_not_check:
             self._check_loading()
 
-    def load_package_data(self, package_data=None):
+    def initialize_loading(self, loading, packages):
+
+        self._initialize_loading_in_db(loading, packages)
+        self._new_loading = False
+
+        result_info = {'loading': self._loading_parameters, 'packages': self._packages}
+
+        return self._replace_date_to_str_in_info(result_info)
+
+    def load_package_data(self, package):
+
+        if self._new_loading:
+            raise ProcessorException('Loading is not initialized!')
+
+        self._initialize_current_package(package)
 
         self._set_package_status('in_process')
 
@@ -52,7 +52,7 @@ class LoadingProcessor:
         append = not self._loading_parameters['status'] == 'registered' \
                     and self._loading_parameters['type'] == 'full'
 
-        raw_data = package_data or self._current_package['data']
+        raw_data = self._current_package['data']
 
         if not raw_data:
             raise ProcessorException('Package data is not found')
@@ -86,12 +86,18 @@ class LoadingProcessor:
                        'current_package': current_package}
         return self._replace_date_to_str_in_info(result_info)
 
-    def get_loading_info(self, loading_id):
+    def get_loading_info(self):
+
+        if self._new_loading:
+            raise ProcessorException('Loading is not initialized!')
 
         result_info = {'loading': self._loading_parameters, 'packages': self._packages}
         return self._replace_date_to_str_in_info(result_info)
 
     def set_loading_parameters(self, loading):
+
+        if self._new_loading:
+            raise ProcessorException('Loading is not initialized!')
 
         if loading.get('start_date'):
             loading['start_date'] = datetime.datetime.strptime(loading['start_date'], '%d.%m.%Y %H:%M:%S')
@@ -110,6 +116,9 @@ class LoadingProcessor:
         self._db_connector.write_loading(current_loading)
 
     def set_package_parameters(self, package):
+
+        if self._new_loading:
+            raise ProcessorException('Loading is not initialized!')
 
         if package.get('start_date'):
             package['start_date'] = datetime.datetime.strptime(package['start_date'], '%d.%m.%Y %H:%M:%S')
@@ -140,6 +149,10 @@ class LoadingProcessor:
             self._db_connector.write_package(current_package)
 
     def delete_loading_parameters(self):
+
+        if self._new_loading:
+            raise ProcessorException('Loading is not initialized!')
+
         self._db_connector.delete_loading(self.loading_id)
 
         self.loading_id = ''
@@ -153,41 +166,50 @@ class LoadingProcessor:
     def _get_packages_from_db(self):
         return self._db_connector.read_loading_packages(self.loading_id)
 
-    def _initialize_loading_in_db(self, parameters):
+    def _initialize_loading_in_db(self, loading, packages):
 
-        if not parameters.get('packages'):
-            raise ProcessorException('parameter "packages" is not found in parameters')
+        # fields = ['id', 'type', 'status', 'quantity_of_packages',
+        #           'start_date', 'end_date']
 
-        fields = ['id', 'type', 'status', 'quantity_of_packages',
-                  'start_date', 'end_date']
+        c_loading = loading.copy()
 
-        loading = {field: parameters['loading_' + field] for field in fields}
-        loading['id'] = self.loading_id
+        if c_loading['start_date']:
+            c_loading['start_date'] = self._str_to_date(c_loading['start_date'])
+        if c_loading['end_date']:
+            c_loading['end_date'] = self._str_to_date(c_loading['end_date'])
 
-        if loading['start_date']:
-            loading['start_date'] = datetime.datetime.strptime(loading['start_date'], '%d.%m.%Y %H:%M:%S')
-        if loading['end_date']:
-            loading['end_date'] = datetime.datetime.strptime(loading['end_date'], '%d.%m.%Y %H:%M:%S')
+        self._loading_parameters = c_loading
 
-        self._loading_parameters = loading
-
-        packages = []
         fields = ['id', 'status', 'number', 'quantity_of_objects',
                   'start_date', 'end_date']
 
-        for par_package in parameters['packages']:
+        c_packages = []
+
+        for par_package in packages:
             package = {field: par_package[field] for field in fields}
             package['loading_id'] = self.loading_id
             if package['start_date']:
-                package['start_date'] = datetime.datetime.strptime(package['start_date'], '%d.%m.%Y %H:%M:%S')
+                package['start_date'] = self._str_to_date(package['start_date'])
             if package['end_date']:
-                package['end_date'] = datetime.datetime.strptime(package['end_date'], '%d.%m.%Y %H:%M:%S')
-            packages.append(package)
+                package['end_date'] = self._str_to_date(package['end_date'])
+            c_packages.append(package)
 
-        self._packages = packages
+        self._packages = c_packages
 
-        self._db_connector.write_loading(loading)
-        self._db_connector.write_packages(packages)
+        self._db_connector.write_loading(self._loading_parameters)
+        self._db_connector.write_packages(self._packages)
+
+    def _initialize_current_package(self, package):
+
+        fields = ['id', 'status', 'number', 'quantity_of_objects',
+                  'start_date', 'end_date', 'data']
+
+        self._current_package = {field: package[field] for field in fields}
+
+        if self._current_package['start_date']:
+            self._current_package['start_date'] = self._date_to_str(self._current_package['start_date'])
+        if self._current_package['end_date']:
+            self._current_package['end_date'] = self._date_to_str(self._current_package['end_date'])
 
     def _check_loading(self):
 
@@ -377,6 +399,24 @@ class LoadingProcessor:
             result = date.strftime('%d.%m.%Y %H:%M:%S')
         return result
 
+    @staticmethod
+    def _str_to_date(date_str):
+        return datetime.datetime.strptime(date_str, '%d.%m.%Y %H:%M:%S')
+
+
+def initialize_loading(parameters):
+
+    if not parameters.get('loading'):
+        raise ProcessorException('parameter "loading" is not found in parameters')
+
+    if not parameters.get('packages'):
+        raise ProcessorException('parameter "packages" is not found in parameters')
+
+    loading = LoadingProcessor(parameters['loading']['id'], parameters)
+    loading_info = loading.initialize_loading(parameters['loading'], parameters['packages'])
+
+    return {'status': 'OK', 'error_text': '', 'description': 'package loaded', 'result_info': loading_info}
+
 
 @JobProcessor.job_processing
 def load_package(parameters):
@@ -396,7 +436,7 @@ def get_loading_info(parameters):
         raise ProcessorException('parameter "loading_id" is not found in parameters')
 
     loading = LoadingProcessor(parameters['loading_id'], parameters)
-    loading_info = loading.get_loading_info(parameters['loading_id'])
+    loading_info = loading.get_loading_info()
 
     return {'status': 'OK', 'error_text': '', 'description': 'loading info get',
             'result_info': loading_info}
