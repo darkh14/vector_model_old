@@ -287,6 +287,9 @@ class LoadingProcessor:
         current_date = datetime.datetime.now()
 
         self._current_package['status'] = status
+        for package in self._packages:
+            if package['id'] == self._current_package['id']:
+                package['status'] = status
         if status == 'in_process':
             self._current_package['start_date'] = current_date
             self._current_package['end_date'] = ''
