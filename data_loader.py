@@ -56,21 +56,28 @@ class LoadingProcessor:
         if not raw_data:
             raise ProcessorException('Package data is not found')
 
-        pd_data, indicators, analytics, analytic_keys = self._preprocess_raw_data(raw_data)
+        try:
 
-        for indicator_el in indicators:
-            self._db_connector.write_indicator(indicator_el)
+            pd_data, indicators, analytics, analytic_keys = self._preprocess_raw_data(raw_data)
 
-        for analytic_el in analytics:
-            self._db_connector.write_analytic(analytic_el)
+            for indicator_el in indicators:
+                self._db_connector.write_indicator(indicator_el)
 
-        for analytic_key in analytic_keys:
-            self._db_connector.write_analytic_key(analytic_key)
+            for analytic_el in analytics:
+                self._db_connector.write_analytic(analytic_el)
 
-        raw_data = pd_data.to_dict('records')
-        self._db_connector.write_raw_data(raw_data, overwrite=overwrite, append=append)
+            for analytic_key in analytic_keys:
+                self._db_connector.write_analytic_key(analytic_key)
 
-        self._set_package_status('loaded')
+            raw_data = pd_data.to_dict('records')
+            self._db_connector.write_raw_data(raw_data, overwrite=overwrite, append=append)
+
+            self._set_package_status('loaded')
+
+        except Exception as ex:
+
+            self._set_package_status('error', str(ex))
+            raise ex
 
         current_package = self._current_package.copy()
         current_package.pop('data')
@@ -282,14 +289,13 @@ class LoadingProcessor:
         else:
             return ''
 
-    def _set_package_status(self, status):
+    def _set_package_status(self, status, error_text=''):
 
         current_date = datetime.datetime.now()
 
         self._current_package['status'] = status
-        for package in self._packages:
-            if package['id'] == self._current_package['id']:
-                package['status'] = status
+        self._current_package['error_text'] = error_text
+
         if status == 'in_process':
             self._current_package['start_date'] = current_date
             self._current_package['end_date'] = ''
@@ -297,7 +303,13 @@ class LoadingProcessor:
             self._current_package['end_date'] = current_date
         elif status == 'registered':
             self._current_package['start_date'] = ''
-            self._current_package['end_date'] = ''
+        elif status == 'error':
+            self._current_package['end_date'] = current_date
+
+        for package in self._packages:
+            if package['id'] == self._current_package['id']:
+                package.update(self._current_package)
+                package.pop('data')
 
         package = self._current_package.copy()
         package['loading_id'] = self.loading_id
@@ -340,6 +352,7 @@ class LoadingProcessor:
         elif status == 'error':
 
             self._loading_parameters['status'] = status
+            self._loading_parameters['error_text'] = error_text
             self._db_connector.write_loading(self._loading_parameters)
 
     def _replace_date_to_str_in_info(self, loading_info):
