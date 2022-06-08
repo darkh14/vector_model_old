@@ -31,6 +31,9 @@ class LoadingProcessor:
 
     def initialize_loading(self, loading, packages):
 
+        if not self._new_loading:
+            raise ProcessorException('Loading is already initialized!')
+
         self._initialize_loading_in_db(loading, packages)
         self._new_loading = False
 
@@ -415,17 +418,17 @@ def initialize_loading(parameters):
     loading = LoadingProcessor(parameters['loading']['id'], parameters)
     loading_info = loading.initialize_loading(parameters['loading'], parameters['packages'])
 
-    return {'status': 'OK', 'error_text': '', 'description': 'package loaded', 'result_info': loading_info}
+    return {'status': 'OK', 'error_text': '', 'description': 'loading initialized', 'result_info': loading_info}
 
 
 @JobProcessor.job_processing
 def load_package(parameters):
 
-    if not parameters.get('loading_id'):
-        raise ProcessorException('parameter "loading_id" is not found in parameters')
+    if not parameters.get('package'):
+        raise ProcessorException('parameter "package" is not found in parameters')
 
-    loading = LoadingProcessor(parameters['loading_id'], parameters)
-    loading_info = loading.load_package_data()
+    loading = LoadingProcessor(parameters['package']['loading_id'], parameters)
+    loading_info = loading.load_package_data(parameters['package'])
 
     return {'status': 'OK', 'error_text': '', 'description': 'package loaded', 'result_info': loading_info}
 
