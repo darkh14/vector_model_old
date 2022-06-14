@@ -15,6 +15,8 @@ class LoadingProcessor:
 
         self.loading_id = loading_id
 
+        print(self.loading_id)
+
         set_db_connector(parameters)
         self._db_connector = DB_CONNECTOR
 
