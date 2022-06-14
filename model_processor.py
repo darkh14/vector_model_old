@@ -8,6 +8,7 @@ import os
 import math
 from abc import ABCMeta, abstractmethod
 import json
+import hashlib
 
 from job_processor import JobProcessor
 
@@ -644,7 +645,6 @@ class NeuralNetworkModel(BaseModel):
         inner_model.compile(optimizer=optimizers.Adam(learning_rate=0.001), loss='MeanSquaredError',
                             metrics=['RootMeanSquaredError'])
 
-        optimizers
         history = inner_model.fit(x, y, epochs=self._epochs, verbose=2, validation_split=self._validation_split)
 
         self._inner_model = inner_model
@@ -1857,6 +1857,40 @@ class DataProcessor:
 
         dataset = dataset.drop(['shift'], axis=1)
         return dataset
+
+    def add_short_ids_to_raw_data(self, raw_data):
+
+        raw_data['indicator_short_id'] = raw_data['indicator'].apply(self._make_short_id_from_dict)
+        raw_data['analytics'] = raw_data['analytics'].apply(self._add_short_id_to_analytics)
+
+        raw_data['analytics_key_id'] = raw_data['analytics'].apply(self._make_short_id_from_list)
+
+        return raw_data
+
+    def _make_short_id_from_list(self, list_value):
+        if list_value:
+            short_id_list = [el['short_id'] for el in list_value]
+            short_id_list.sort()
+            str_val = ''.join(short_id_list)
+            return self.get_hash(str_val)
+        else:
+            return ''
+
+    def _make_short_id_from_dict(self, dict_value):
+        str_val = dict_value['id'] + dict_value.get('type') or ''
+        return self.get_hash(str_val)
+
+    def _add_short_id_to_analytics(self, analytics_list):
+        for an_el in analytics_list:
+            an_el['short_id'] = self._make_short_id_from_dict(an_el)
+        return analytics_list
+
+    @staticmethod
+    def get_hash(value):
+        if not value.replace(' ', ''):
+            return ''
+        data_hash = hashlib.md5(value.encode())
+        return data_hash.hexdigest()[-7:]
 
     @staticmethod
     def _drop_non_numeric_columns(dataset, indicators):
