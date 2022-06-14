@@ -11,6 +11,7 @@ import json
 import hashlib
 
 from job_processor import JobProcessor
+from data_loader import LoadingProcessor
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
@@ -1430,6 +1431,7 @@ class DataProcessor:
     def __init__(self):
 
         self._db_connector = DB_CONNECTOR
+        self._id_processor = IdProcessor()
 
     def read_model_description_from_db(self, model_id):
         return self._db_connector.read_model_description(model_id)
@@ -1449,6 +1451,9 @@ class DataProcessor:
         for parameters_line in indicator_parameters:
             result_line = self._db_connector.read_indicator_from_type_id(parameters_line['type'], parameters_line['id'])
             if not result_line:
+                print(parameters_line['type'])
+                print(parameters_line['id'])
+
                 raise ProcessorException('indicator {}, id {} not found in indicators'.format(parameters_line.get('name'), parameters_line['id']))
             result_line.update(parameters_line)
             result.append(result_line)
@@ -1859,38 +1864,32 @@ class DataProcessor:
         return dataset
 
     def add_short_ids_to_raw_data(self, raw_data):
-
-        raw_data['indicator_short_id'] = raw_data['indicator'].apply(self._make_short_id_from_dict)
-        raw_data['analytics'] = raw_data['analytics'].apply(self._add_short_id_to_analytics)
-
-        raw_data['analytics_key_id'] = raw_data['analytics'].apply(self._make_short_id_from_list)
-
-        return raw_data
-
-    def _make_short_id_from_list(self, list_value):
-        if list_value:
-            short_id_list = [el['short_id'] for el in list_value]
-            short_id_list.sort()
-            str_val = ''.join(short_id_list)
-            return self.get_hash(str_val)
-        else:
-            return ''
-
-    def _make_short_id_from_dict(self, dict_value):
-        str_val = dict_value['id'] + dict_value.get('type') or ''
-        return self.get_hash(str_val)
-
-    def _add_short_id_to_analytics(self, analytics_list):
-        for an_el in analytics_list:
-            an_el['short_id'] = self._make_short_id_from_dict(an_el)
-        return analytics_list
-
-    @staticmethod
-    def get_hash(value):
-        if not value.replace(' ', ''):
-            return ''
-        data_hash = hashlib.md5(value.encode())
-        return data_hash.hexdigest()[-7:]
+        return self._id_processor.add_short_ids_to_raw_data(raw_data)
+    #
+    # def _make_short_id_from_list(self, list_value):
+    #     if list_value:
+    #         short_id_list = [el['short_id'] for el in list_value]
+    #         short_id_list.sort()
+    #         str_val = ''.join(short_id_list)
+    #         return self.get_hash(str_val)
+    #     else:
+    #         return ''
+    #
+    # def _make_short_id_from_dict(self, dict_value):
+    #     str_val = dict_value['id'] + dict_value.get('type') or ''
+    #     return self.get_hash(str_val)
+    #
+    # def _add_short_id_to_analytics(self, analytics_list):
+    #     for an_el in analytics_list:
+    #         an_el['short_id'] = self._make_short_id_from_dict(an_el)
+    #     return analytics_list
+    #
+    # @staticmethod
+    # def get_hash(value):
+    #     if not value.replace(' ', ''):
+    #         return ''
+    #     data_hash = hashlib.md5(value.encode())
+    #     return data_hash.hexdigest()[-7:]
 
     @staticmethod
     def _drop_non_numeric_columns(dataset, indicators):
@@ -2131,6 +2130,11 @@ class DataProcessor:
 
         return x_analytics, y_analytics, x_analytic_keys, y_analytic_keys
 
+
+class IdProcessor(LoadingProcessor):
+
+    def __init__(self):
+        pass
 
 class PeriodicDataProcessor(DataProcessor):
 
