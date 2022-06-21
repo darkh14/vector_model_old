@@ -310,9 +310,11 @@ class BaseModel:
         self.is_fit = True
         self.fitting_date = datetime.datetime.now()
         self.fitting_is_started = False
+        self.fitting_start_date = None
         self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
         self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
         self._data_processor.write_model_field(self.model_id, 'fitting_date', self.fitting_date)
+        self._data_processor.write_model_field(self.model_id, 'fitting_start_date', self.fitting_start_date)
         self._data_processor.write_model_field(self.model_id, 'fitting_job_id', '')
 
     @abstractmethod
