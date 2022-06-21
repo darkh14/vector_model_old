@@ -143,6 +143,19 @@ class ModelProcessor:
 
         return rsme, mspe
 
+    def get_model_parameters(self, parameters):
+
+        model_description = parameters.get('model')
+
+        if not model_description:
+            raise ProcessorException('model is not in parameters')
+
+        self.model = self._get_model(model_description)
+
+        model_parameters = self.model.get_model_parameters()
+
+        return model_parameters
+
     def get_factor_analysis_data(self, parameters):
 
         model_description = parameters.get('model')
@@ -219,8 +232,12 @@ class BaseModel:
         self._data_processor = DataProcessor()
 
         self.is_fit = False
+        self.fitting_date = None
+        self.fitting_is_started = False
+        self.fitting_start_date = None
 
-        self._field_to_update = ['name', 'type', 'is_fit', 'filter', 'x_indicators', 'y_indicators', 'periods', 'organisations',
+        self._field_to_update = ['name', 'type', 'is_fit', 'fitting_is_started', 'fitting_start_date',  'fitting_date',
+                                 'filter', 'x_indicators', 'y_indicators', 'periods', 'organisations',
                                  'scenarios', 'x_columns', 'y_columns', 'x_analytics', 'y_analytics',
                                  'x_analytic_keys', 'y_analytic_keys', 'feature_importances']
 
@@ -236,6 +253,9 @@ class BaseModel:
             self.filter = model_filter
 
             self.is_fit = False
+            self.fitting_date = None
+            self.fitting_is_started = False
+            self.fitting_start_date = None
 
         if x_indicators:
             self.x_indicators = self._data_processor.get_indicators_data_from_parameters(x_indicators)
@@ -268,8 +288,24 @@ class BaseModel:
             self._data_processor.write_model_to_db(self.model_id, model_description)
             self.need_to_update = False
 
+    def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
+
+        self.fitting_is_started = True
+        self.fitting_start_date = datetime.datetime.now()
+        self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
+        self._data_processor.write_model_field(self.model_id, 'fitting_start_date', self.fitting_start_date)
+
+        self.fit_model(epochs=epochs, validation_split=validation_split, retrofit=retrofit, date_from=date_from)
+
+        self.is_fit = True
+        self.fitting_date = datetime.datetime.now()
+        self.fitting_is_started = False
+        self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
+        self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
+        self._data_processor.write_model_field(self.model_id, 'fitting_date', self.fitting_date)
+
     @abstractmethod
-    def fit(self, retrofit=False, date_from=None):
+    def fit_model(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
         """method for fitting model"""
 
     @abstractmethod
@@ -332,6 +368,26 @@ class BaseModel:
             raise ProcessorException('MSPE is not calculated')
 
         return rsme, mspe
+
+    def get_model_parameters(self):
+        rsme = self._data_processor.read_model_field(self.model_id, 'rsme')
+        mspe = self._data_processor.read_model_field(self.model_id, 'mspe')
+
+        is_fit = self._data_processor.read_model_field(self.model_id, 'is_fit')
+        fitting_is_started = self._data_processor.read_model_field(self.model_id, 'fitting_is_started')
+        fitting_date = self._data_processor.read_model_field(self.model_id, 'fitting_date')
+
+        if fitting_date:
+            fitting_date = fitting_date.strftime('%d.%m.%Y %H:%M:%S')
+
+        fitting_start_date = self._data_processor.read_model_field(self.model_id, 'fitting_start_date')
+        if fitting_start_date:
+            fitting_start_date = fitting_start_date.strftime('%d.%m.%Y %H:%M:%S')
+
+        model_parameters = {'rsme': rsme, 'mspe': mspe, 'is_fit': is_fit, 'fitting_date': fitting_date,
+                            'fitting_is_started': fitting_is_started, 'fitting_start_date': fitting_start_date}
+
+        return model_parameters
 
     @abstractmethod
     def get_factor_analysis_data(self, inputs, output_indicator_id, step=0.3, get_graph=False):
@@ -633,7 +689,7 @@ class NeuralNetworkModel(BaseModel):
 
         self._temp_input = None
 
-    def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
+    def fit_model(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
 
         x, y = self._prepare_for_fit(retrofit, date_from)
 
@@ -789,9 +845,6 @@ class NeuralNetworkModel(BaseModel):
 
         self._data_processor.write_model_field(self.model_id, 'rsme', rmse)
         self._data_processor.write_model_field(self.model_id, 'mspe', mspe)
-
-        self.is_fit = True
-        self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
 
         self._data_processor.write_inner_model(self.model_id, self._inner_model)
 
@@ -1048,7 +1101,7 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
         model_description = {'past_history': self.past_history, 'future_target': self.future_target}
         self._data_processor.write_model_to_db(self.model_id, model_description)
 
-    def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
+    def fit_model(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
 
         add_parameters = {'past_history': self.past_history,  'future_target': self.future_target}
         x, y = self._prepare_for_fit(retrofit, date_from, add_parameters)
@@ -1279,7 +1332,7 @@ class LinearModel(BaseModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def fit(self, **kwargs):
+    def fit_model(self, **kwargs):
 
         indicator_filter = [ind_data['id'] for ind_data in self.x_indicators + self.y_indicators]
 
@@ -2133,6 +2186,7 @@ class IdProcessor(LoadingProcessor):
     def __init__(self):
         pass
 
+
 class PeriodicDataProcessor(DataProcessor):
 
     def get_x_y_for_fitting(self, data, additional_data, encode_fields=None):
@@ -2314,7 +2368,7 @@ def get_feature_importances(parameters):
     get_graph = parameters.get('get_graph')
     fi, graph_bin = processor.get_feature_importances(parameters)
 
-    result = dict(status='OK', error_text='', result=fi, description='model feature importances recieved')
+    result = dict(status='OK', error_text='', result=fi, description='model feature importances is recieved')
     if get_graph:
         result['graph_data'] = base64.b64encode(graph_bin).decode(encoding='utf-8')
     return result
@@ -2325,7 +2379,18 @@ def get_rsme(parameters):
     processor = ModelProcessor(parameters)
     rsme, mspe = processor.get_rsme(parameters)
 
-    result = dict(status='OK', error_text='', rsme=rsme, mspe=mspe, description='model rsme recieved')
+    result = dict(status='OK', error_text='', rsme=rsme, mspe=mspe, description='model rsme is recieved')
+
+    return result
+
+
+def get_model_parameters(parameters):
+
+    processor = ModelProcessor(parameters)
+    model_parameters = processor.get_model_parameters(parameters)
+
+    result = dict(status='OK', error_text='', model_parameters=model_parameters,
+                  description='model parameters is recieved')
 
     return result
 

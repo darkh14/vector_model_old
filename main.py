@@ -55,6 +55,7 @@ if __name__ == '__main__':
     request_dict[12] = 'data_set_package_parameters'
     request_dict[13] = 'data_delete_loading_parameters'
     request_dict[14] = 'data_initialize_loading'
+    request_dict[15] = 'model_get_parameters'
 
     print('Input number to choose action:')
     for key, value in request_dict.items():
