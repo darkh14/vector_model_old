@@ -73,10 +73,12 @@ class ModelProcessor:
         retrofit = parameters.get('retrofit') and not need_to_update
         date_from = parameters.get('date_from')
 
+        job_id = parameters.get('job_id') or ''
+
         history = self.model.fit(epochs=parameters.get('epochs'),
                                  validation_split=parameters.get('validation_split'),
                                  retrofit=retrofit,
-                                 date_from=date_from)
+                                 date_from=date_from, job_id=job_id)
 
         return history
 
@@ -235,11 +237,12 @@ class BaseModel:
         self.fitting_date = None
         self.fitting_is_started = False
         self.fitting_start_date = None
+        self.fitting_job_id = ''
 
         self._field_to_update = ['name', 'type', 'is_fit', 'fitting_is_started', 'fitting_start_date',  'fitting_date',
                                  'filter', 'x_indicators', 'y_indicators', 'periods', 'organisations',
                                  'scenarios', 'x_columns', 'y_columns', 'x_analytics', 'y_analytics',
-                                 'x_analytic_keys', 'y_analytic_keys', 'feature_importances']
+                                 'x_analytic_keys', 'y_analytic_keys', 'feature_importances', 'fitting_job_id']
 
         description_from_db = self._data_processor.read_model_description_from_db(self.model_id)
 
@@ -256,6 +259,7 @@ class BaseModel:
             self.fitting_date = None
             self.fitting_is_started = False
             self.fitting_start_date = None
+            self.fitting_job_id = ''
 
         if x_indicators:
             self.x_indicators = self._data_processor.get_indicators_data_from_parameters(x_indicators)
@@ -288,12 +292,16 @@ class BaseModel:
             self._data_processor.write_model_to_db(self.model_id, model_description)
             self.need_to_update = False
 
-    def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
+    def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None, job_id=''):
+
+        job_id = job_id or ''
 
         self.fitting_is_started = True
         self.fitting_start_date = datetime.datetime.now()
+        self.fitting_job_id = job_id
         self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
         self._data_processor.write_model_field(self.model_id, 'fitting_start_date', self.fitting_start_date)
+        self._data_processor.write_model_field(self.model_id, 'fitting_job_id', self.fitting_job_id)
 
         self.fit_model(epochs=epochs, validation_split=validation_split, retrofit=retrofit, date_from=date_from)
 
@@ -303,6 +311,7 @@ class BaseModel:
         self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
         self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
         self._data_processor.write_model_field(self.model_id, 'fitting_date', self.fitting_date)
+        self._data_processor.write_model_field(self.model_id, 'fitting_job_id', '')
 
     @abstractmethod
     def fit_model(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
@@ -384,8 +393,11 @@ class BaseModel:
         if fitting_start_date:
             fitting_start_date = fitting_start_date.strftime('%d.%m.%Y %H:%M:%S')
 
+        fitting_job_id = self._data_processor.read_model_field(self.model_id, 'fitting_job_id')
+
         model_parameters = {'rsme': rsme, 'mspe': mspe, 'is_fit': is_fit, 'fitting_date': fitting_date,
-                            'fitting_is_started': fitting_is_started, 'fitting_start_date': fitting_start_date}
+                            'fitting_is_started': fitting_is_started, 'fitting_start_date': fitting_start_date,
+                            'fitting_job_id': fitting_job_id}
 
         return model_parameters
 

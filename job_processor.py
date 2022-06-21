@@ -232,6 +232,8 @@ def execute_method(system_parameters):
         function_parameters = job_line['parameters'].copy()
         function_parameters['background_job'] = False
 
+        function_parameters['job_id'] = job_id
+
         result = imported_function(function_parameters)
 
         logger = StdOutErrLogger(job_id)
