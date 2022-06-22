@@ -294,6 +294,9 @@ class BaseModel:
 
     def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None, job_id=''):
 
+        if self.fitting_is_started:
+            raise ProcessorException('Fitting is always started')
+
         job_id = job_id or ''
 
         self.is_fit = False
