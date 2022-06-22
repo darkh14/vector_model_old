@@ -1497,6 +1497,12 @@ class LinearModel(BaseModel):
         return None, None, None
 
 
+class IdProcessor(LoadingProcessor):
+
+    def __init__(self):
+        pass
+
+
 class DataProcessor:
 
     def __init__(self):
@@ -1522,7 +1528,9 @@ class DataProcessor:
         for parameters_line in indicator_parameters:
             result_line = self._db_connector.read_indicator_from_type_id(parameters_line['type'], parameters_line['id'])
             if not result_line:
-                raise ProcessorException('indicator {}, id {} not found in indicators'.format(parameters_line.get('name'), parameters_line['id']))
+                raise ProcessorException('indicator {}, id {}, type {}  not found in indicators'.format(parameters_line.get('name'),
+                                                                                                        parameters_line['type'],
+                                                                                                        parameters_line['id']))
             result_line.update(parameters_line)
             result.append(result_line)
 
@@ -2197,12 +2205,6 @@ class DataProcessor:
                     y_analytics.append(self._get_analytics_description_from_short_id(an_el['short_id']))
 
         return x_analytics, y_analytics, x_analytic_keys, y_analytic_keys
-
-
-class IdProcessor(LoadingProcessor):
-
-    def __init__(self):
-        pass
 
 
 class PeriodicDataProcessor(DataProcessor):
