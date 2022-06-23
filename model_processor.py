@@ -67,7 +67,8 @@ class ModelProcessor:
 
         self.model = self._get_model(model_description)
 
-        self.model.update_model()
+        drop_started_fitting = parameters.get('drop_started_fitting')
+        self.model.update_model(model_description, drop_started_fitting=drop_started_fitting)
 
     def load_data(self, parameters):
 
@@ -301,11 +302,14 @@ class BaseModel:
         if self.initialized:
             raise ProcessorException('Model is already initialized')
 
+        self.initialized = True
+
         model_description = {field: getattr(self, field) for field in self._field_to_update}
 
         self._data_processor.write_model_to_db(self.model_id, model_description)
 
-    def update_model(self, drop_started_fitting):
+    def update_model(self, model_parameters=None, drop_started_fitting=False):
+
         if not self.initialized:
             raise ProcessorException('Model is not initialized')
 
@@ -323,6 +327,10 @@ class BaseModel:
         self.fitting_date = None
 
         self.fitting_job_id = ''
+
+        for key, value in model_parameters.items():
+            if key in self._field_to_update:
+                setattr(self, key, value)
 
         model_description = {field: getattr(self, field) for field in self._field_to_update}
 
