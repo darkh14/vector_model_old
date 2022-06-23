@@ -1803,18 +1803,19 @@ class DataProcessor:
                 os.mkdir('tmp')
 
             model_description = self.read_model_description_from_db(model_id)
-            inner_model = model_description['inner_model']
-            with open('tmp/model.zip', 'wb') as f:
-                f.write(inner_model)
+            inner_model = model_description.get('inner_model')
+            if inner_model:
+                with open('tmp/model.zip', 'wb') as f:
+                    f.write(inner_model)
 
-            with zipfile.ZipFile('tmp/model.zip', 'r') as zip_h:
-                zip_h.extractall('tmp/model')
+                with zipfile.ZipFile('tmp/model.zip', 'r') as zip_h:
+                    zip_h.extractall('tmp/model')
 
-            inner_model = keras.models.load_model('tmp/model')
+                inner_model = keras.models.load_model('tmp/model')
 
-            if not use_pickle:
-                os.remove('tmp/model.zip')
-                shutil.rmtree('tmp/model')
+                if not use_pickle:
+                    os.remove('tmp/model.zip')
+                    shutil.rmtree('tmp/model')
 
         return inner_model
 
