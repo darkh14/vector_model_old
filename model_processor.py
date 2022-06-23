@@ -256,7 +256,7 @@ class BaseModel:
         self.fitting_job_id = ''
 
         self._field_to_update = ['name', 'type', 'initialized', 'is_fit', 'fitting_is_started', 'fitting_start_date',
-                                 'fitting_date',
+                                 'fitting_date', 'rsme', 'mspe',
                                  'filter', 'x_indicators', 'y_indicators', 'periods', 'organisations',
                                  'scenarios', 'x_columns', 'y_columns', 'x_analytics', 'y_analytics',
                                  'x_analytic_keys', 'y_analytic_keys', 'feature_importances', 'fitting_job_id']
@@ -278,6 +278,8 @@ class BaseModel:
             self.fitting_start_date = None
             self.fitting_job_id = ''
             self.initialized = False
+            self.rsme = 0
+            self.mspe=0
 
         if x_indicators:
             self.x_indicators = self._data_processor.get_indicators_data_from_parameters(x_indicators)
@@ -303,6 +305,8 @@ class BaseModel:
             raise ProcessorException('Model is already initialized')
 
         self.initialized = True
+        self.rsme = 0
+        self.mspe = 0
 
         model_description = {field: getattr(self, field) for field in self._field_to_update}
 
