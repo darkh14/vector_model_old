@@ -337,9 +337,11 @@ class BaseModel:
 
         if x_indicators:
             self.x_indicators = self._data_processor.get_indicators_data_from_parameters(x_indicators)
+            model_parameters['x_indicators'] = self.x_indicators
 
         if y_indicators:
             self.y_indicators = self._data_processor.get_indicators_data_from_parameters(y_indicators)
+            model_parameters['y_indicators'] = self.y_indicators
 
         for key, value in model_parameters.items():
             if key in self._field_to_update:
