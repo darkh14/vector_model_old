@@ -332,20 +332,21 @@ class BaseModel:
 
         self.fitting_job_id = ''
 
-        x_indicators = model_parameters.get('x_indicators')
-        y_indicators = model_parameters.get('y_indicators')
+        if model_parameters:
+            x_indicators = model_parameters.get('x_indicators')
+            y_indicators = model_parameters.get('y_indicators')
 
-        if x_indicators:
-            self.x_indicators = self._data_processor.get_indicators_data_from_parameters(x_indicators)
-            model_parameters['x_indicators'] = self.x_indicators
+            if x_indicators:
+                self.x_indicators = self._data_processor.get_indicators_data_from_parameters(x_indicators)
+                model_parameters['x_indicators'] = self.x_indicators
 
-        if y_indicators:
-            self.y_indicators = self._data_processor.get_indicators_data_from_parameters(y_indicators)
-            model_parameters['y_indicators'] = self.y_indicators
+            if y_indicators:
+                self.y_indicators = self._data_processor.get_indicators_data_from_parameters(y_indicators)
+                model_parameters['y_indicators'] = self.y_indicators
 
-        for key, value in model_parameters.items():
-            if key in self._field_to_update:
-                setattr(self, key, value)
+            for key, value in model_parameters.items():
+                if key in self._field_to_update:
+                    setattr(self, key, value)
 
         model_description = {field: getattr(self, field) for field in self._field_to_update}
 
@@ -1199,6 +1200,22 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
         else:
             self.past_history = model_parameters.get('past_history')
             self.future_target = model_parameters.get('future_target')
+
+    def initialize_model(self):
+        super().initialize_model()
+
+        model_description = {'past_history': self.past_history, 'future_target': self.future_target}
+        self._data_processor.write_model_to_db(self.model_id, model_description)
+
+    def update_model(self, model_parameters=None, drop_started_fitting=False):
+        super().update_model(model_parameters, drop_started_fitting)
+        field_to_update = ['past_history', 'future_target']
+        for key, value in model_parameters.items():
+            if key in field_to_update:
+                setattr(self, key, value)
+
+        model_description = {field: getattr(self, field) for field in field_to_update}
+        self._data_processor.write_model_to_db(self.model_id, model_description)
 
     def update_model_while_fitting(self, data):
         super().update_model_while_fitting(data)
