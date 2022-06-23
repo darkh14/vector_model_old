@@ -352,7 +352,7 @@ class BaseModel:
 
     def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None, job_id=''):
 
-        if self.initialized:
+        if not self.initialized:
             raise ProcessorException('Model is not initialized')
 
         if self.fitting_is_started:
@@ -1604,8 +1604,8 @@ class DataProcessor:
             result_line = self._db_connector.read_indicator_from_type_id(parameters_line['type'], parameters_line['id'])
             if not result_line:
                 raise ProcessorException('indicator {}, id {}, type {}  not found in indicators'.format(parameters_line.get('name'),
-                                                                                                        parameters_line['type'],
-                                                                                                        parameters_line['id']))
+                                                                                                        parameters_line['id'],
+                                                                                                        parameters_line['type']))
             result_line.update(parameters_line)
             result.append(result_line)
 
