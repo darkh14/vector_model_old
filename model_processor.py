@@ -49,6 +49,26 @@ class ModelProcessor:
 
         self.model = None
 
+    def initialize_model(self, parameters):
+        model_description = parameters.get('model')
+
+        if not model_description:
+            raise ProcessorException('model is not in parameters')
+
+        self.model = self._get_model(model_description)
+
+        self.model.initialize_model()
+
+    def update_model(self, parameters):
+        model_description = parameters.get('model')
+
+        if not model_description:
+            raise ProcessorException('model is not in parameters')
+
+        self.model = self._get_model(model_description)
+
+        self.model.update_model()
+
     def load_data(self, parameters):
 
         raw_data = parameters.get('data')
@@ -66,11 +86,9 @@ class ModelProcessor:
         if not model_description:
             raise ProcessorException('model is not in parameters')
 
-        need_to_update = bool(model_description.get('need_to_update'))
-
         self.model = self._get_model(model_description)
 
-        retrofit = parameters.get('retrofit') and not need_to_update
+        retrofit = parameters.get('retrofit')
         date_from = parameters.get('date_from')
 
         job_id = parameters.get('job_id') or ''
@@ -186,8 +204,6 @@ class ModelProcessor:
 
     def _get_model(self, model_description):
 
-        need_to_update = bool(model_description.get('need_to_update'))
-
         model_type = model_description.get('type')
         if not model_type:
             model_type = self._data_processor.read_model_field(model_description['id'], 'type')
@@ -207,8 +223,6 @@ class ModelProcessor:
         if not model_class:
             raise ProcessorException('model type "{}" is not supported'.format(model_type))
 
-        model_description['need_to_update'] = need_to_update
-
         model = model_class(model_description['id'], model_description)
 
         return model
@@ -225,7 +239,7 @@ class BaseModel:
 
         x_indicators = model_parameters.get('x_indicators')
         y_indicators = model_parameters.get('y_indicators')
-        need_to_update = model_parameters.get('need_to_update')
+
         model_filter = model_parameters.get('filter')
 
         self.model_id = model_id
@@ -233,13 +247,15 @@ class BaseModel:
         self._db_connector = DB_CONNECTOR
         self._data_processor = DataProcessor()
 
+        self.initialized = False
         self.is_fit = False
         self.fitting_date = None
         self.fitting_is_started = False
         self.fitting_start_date = None
         self.fitting_job_id = ''
 
-        self._field_to_update = ['name', 'type', 'is_fit', 'fitting_is_started', 'fitting_start_date',  'fitting_date',
+        self._field_to_update = ['name', 'type', 'initialized', 'is_fit', 'fitting_is_started', 'fitting_start_date',
+                                 'fitting_date',
                                  'filter', 'x_indicators', 'y_indicators', 'periods', 'organisations',
                                  'scenarios', 'x_columns', 'y_columns', 'x_analytics', 'y_analytics',
                                  'x_analytic_keys', 'y_analytic_keys', 'feature_importances', 'fitting_job_id']
@@ -260,6 +276,7 @@ class BaseModel:
             self.fitting_is_started = False
             self.fitting_start_date = None
             self.fitting_job_id = ''
+            self.initialized = False
 
         if x_indicators:
             self.x_indicators = self._data_processor.get_indicators_data_from_parameters(x_indicators)
@@ -275,24 +292,56 @@ class BaseModel:
         if model_filter:
             self.filter = model_filter
 
-        self.need_to_update = not description_from_db or need_to_update
         self.graph_file_name = 'graph.png'
         self.graph_fi_file_name = 'fi_graph.png'
         self.graph_fa_file_name = 'fa_graph.png'
 
-    def update_model(self, data):
-        if self.need_to_update:
-            organisations, scenarios, periods = self._data_processor.get_additional_data(data)
-            self.periods = periods
-            self.organisations = organisations
-            self.scenarios = scenarios
+    def initialize_model(self):
 
-            model_description = {field: getattr(self, field) for field in self._field_to_update}
+        if self.initialized:
+            raise ProcessorException('Model is already initialized')
 
-            self._data_processor.write_model_to_db(self.model_id, model_description)
-            self.need_to_update = False
+        model_description = {field: getattr(self, field) for field in self._field_to_update}
+
+        self._data_processor.write_model_to_db(self.model_id, model_description)
+
+    def update_model(self, drop_started_fitting):
+        if not self.initialized:
+            raise ProcessorException('Model is not initialized')
+
+        if self.fitting_is_started and not drop_started_fitting:
+            raise ProcessorException('Fitting is started, model can not be updated. If you ')
+
+        self.periods = []
+        self.organisations = []
+        self.scenarios = []
+
+        self.is_fit = False
+        self.fitting_is_started = False
+
+        self.fitting_start_date = None
+        self.fitting_date = None
+
+        self.fitting_job_id = ''
+
+        model_description = {field: getattr(self, field) for field in self._field_to_update}
+
+        self._data_processor.write_model_to_db(self.model_id, model_description)
+
+    def update_model_while_fitting(self, data):
+        organisations, scenarios, periods = self._data_processor.get_additional_data(data)
+        self.periods = periods
+        self.organisations = organisations
+        self.scenarios = scenarios
+
+        model_description = {field: getattr(self, field) for field in ['organisations', 'periods', 'scenarios']}
+
+        self._data_processor.write_model_to_db(self.model_id, model_description)
 
     def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None, job_id=''):
+
+        if self.initialized:
+            raise ProcessorException('Model is not initialized')
 
         if self.fitting_is_started:
             raise ProcessorException('Fitting is always started')
@@ -388,23 +437,39 @@ class BaseModel:
         return rsme, mspe
 
     def get_model_parameters(self):
-        rsme = self._data_processor.read_model_field(self.model_id, 'rsme')
-        mspe = self._data_processor.read_model_field(self.model_id, 'mspe')
 
-        is_fit = self._data_processor.read_model_field(self.model_id, 'is_fit')
-        fitting_is_started = self._data_processor.read_model_field(self.model_id, 'fitting_is_started')
-        fitting_date = self._data_processor.read_model_field(self.model_id, 'fitting_date')
+        initialized = self.initialized
 
-        if fitting_date:
-            fitting_date = fitting_date.strftime('%d.%m.%Y %H:%M:%S')
+        if initialized:
+            rsme = self._data_processor.read_model_field(self.model_id, 'rsme')
+            mspe = self._data_processor.read_model_field(self.model_id, 'mspe')
 
-        fitting_start_date = self._data_processor.read_model_field(self.model_id, 'fitting_start_date')
-        if fitting_start_date:
-            fitting_start_date = fitting_start_date.strftime('%d.%m.%Y %H:%M:%S')
+            is_fit = self._data_processor.read_model_field(self.model_id, 'is_fit')
+            fitting_is_started = self._data_processor.read_model_field(self.model_id, 'fitting_is_started')
+            fitting_date = self._data_processor.read_model_field(self.model_id, 'fitting_date')
 
-        fitting_job_id = self._data_processor.read_model_field(self.model_id, 'fitting_job_id')
+            if fitting_date:
+                fitting_date = fitting_date.strftime('%d.%m.%Y %H:%M:%S')
 
-        model_parameters = {'rsme': rsme, 'mspe': mspe, 'is_fit': is_fit, 'fitting_date': fitting_date,
+            fitting_start_date = self._data_processor.read_model_field(self.model_id, 'fitting_start_date')
+            if fitting_start_date:
+                fitting_start_date = fitting_start_date.strftime('%d.%m.%Y %H:%M:%S')
+
+            fitting_job_id = self._data_processor.read_model_field(self.model_id, 'fitting_job_id')
+        else:
+            rsme = 0
+            mspe = 0
+
+            is_fit = False
+            fitting_is_started = False
+            fitting_date = None
+
+            fitting_start_date = None
+
+            fitting_job_id = ''
+
+        model_parameters = {'initialized': initialized, 'rsme': rsme, 'mspe': mspe, 'is_fit': is_fit,
+                            'fitting_date': fitting_date,
                             'fitting_is_started': fitting_is_started, 'fitting_start_date': fitting_start_date,
                             'fitting_job_id': fitting_job_id}
 
@@ -714,7 +779,7 @@ class NeuralNetworkModel(BaseModel):
 
         x, y = self._prepare_for_fit(retrofit, date_from)
 
-        inner_model = self._get_inner_model(x.shape[1], y.shape[1], retrofit=retrofit)
+        inner_model = self._get_inner_model(x.shape[1], y.shape[1])
 
         self._inner_model = inner_model
         self._epochs = epochs or 1000
@@ -754,7 +819,7 @@ class NeuralNetworkModel(BaseModel):
         encode_fields = None
         x, x_pd = self._data_processor.get_x_for_prediction(data, additional_data, encode_fields)
 
-        inner_model = self._get_inner_model(retrofit=True)
+        inner_model = self._get_inner_model()
 
         y = inner_model.predict(x)
 
@@ -819,10 +884,8 @@ class NeuralNetworkModel(BaseModel):
         indicator_filter = [ind_data['short_id'] for ind_data in self.x_indicators + self.y_indicators]
 
         data = self._data_processor.read_raw_data(indicator_filter, date_from=date_from, ad_filter=self.filter)
-        if retrofit and self.need_to_update:
-            raise ProcessorException('Model can not be updated when retrofit')
-
-        self.update_model(data)
+        if not retrofit:
+            self.update_model_while_fitting(data)
 
         additional_data = {'model_id': self.model_id,
                            'x_indicators': self.x_indicators,
@@ -903,13 +966,10 @@ class NeuralNetworkModel(BaseModel):
 
         return scaler
 
-    def _get_inner_model(self, inputs_number=0, outputs_number=0, retrofit=False):
+    def _get_inner_model(self, inputs_number=0, outputs_number=0):
 
-        if retrofit:
-            inner_model = self._data_processor.read_inner_model(self.model_id)
-            if not inner_model:
-                inner_model = self._create_inner_model(inputs_number, outputs_number)
-        else:
+        inner_model = self._data_processor.read_inner_model(self.model_id)
+        if not inner_model:
             inner_model = self._create_inner_model(inputs_number, outputs_number)
 
         self._inner_model = inner_model
@@ -948,7 +1008,7 @@ class NeuralNetworkModel(BaseModel):
                 if column_name not in period_columns:
                     period_columns.append(column_name)
 
-        inner_model = self._get_inner_model(retrofit=True)
+        inner_model = self._get_inner_model()
 
         step = step or 0.3
 
@@ -1117,8 +1177,8 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
             self.past_history = model_parameters.get('past_history')
             self.future_target = model_parameters.get('future_target')
 
-    def update_model(self, data):
-        super().update_model(data)
+    def update_model_while_fitting(self, data):
+        super().update_model_while_fitting(data)
         model_description = {'past_history': self.past_history, 'future_target': self.future_target}
         self._data_processor.write_model_to_db(self.model_id, model_description)
 
@@ -1135,7 +1195,7 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
         x_y_data = tf.data.Dataset.from_tensor_slices((x, y))
         x_y_data = x_y_data.cache().shuffle(BUFFER_SIZE).batch(BATCH_SIZE).repeat()
 
-        inner_model = self._get_inner_model(x.shape[-2:], y.shape[-2], retrofit=retrofit)
+        inner_model = self._get_inner_model(x.shape[-2:], y.shape[-2])
 
         self._epochs = epochs or 10
         self._validation_split = validation_split or 0.2
@@ -1190,7 +1250,7 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
 
         disable_gpu()
 
-        inner_model = self._get_inner_model(retrofit=True)
+        inner_model = self._get_inner_model()
 
         y_sc = inner_model.predict(x)
 
@@ -1359,7 +1419,7 @@ class LinearModel(BaseModel):
 
         data = self._data_processor.read_raw_data(indicator_filter)
 
-        self.update_model(data)
+        self.update_model_while_fitting(data)
 
         additional_data = {'x_indicators': self.x_indicators,
                            'y_indicators': self.y_indicators,
@@ -2349,6 +2409,18 @@ def load_data(parameters):
     processor.load_data(parameters)
 
     return {'status': 'OK', 'error_text': '', 'description': 'model data loaded'}
+
+
+def initialize_model(parameters):
+    processor = ModelProcessor(parameters)
+    processor.initialize_model(parameters)
+    return {'status': 'OK', 'error_text': '', 'description': 'model initialized'}
+
+
+def update_model(parameters):
+    processor = ModelProcessor(parameters)
+    processor.update_model(parameters)
+    return {'status': 'OK', 'error_text': '', 'description': 'model updated'}
 
 
 @JobProcessor.job_processing

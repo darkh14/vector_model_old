@@ -56,6 +56,8 @@ if __name__ == '__main__':
     request_dict[13] = 'data_delete_loading_parameters'
     request_dict[14] = 'data_initialize_loading'
     request_dict[15] = 'model_get_parameters'
+    request_dict[16] = 'model_initialize'
+    request_dict[17] = 'model_update'
 
     print('Input number to choose action:')
     for key, value in request_dict.items():

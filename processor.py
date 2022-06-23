@@ -121,6 +121,8 @@ class Processor:
         result['data_delete_loading_parameters'] = data_loader.delete_loading_parameters
         result['data_initialize_loading'] = data_loader.initialize_loading
         result['model_get_parameters'] = model_processor.get_model_parameters
+        result['model_initialize'] = model_processor.initialize_model
+        result['model_update'] = model_processor.update_model
 
         return result
 
