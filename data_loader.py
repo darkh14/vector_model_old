@@ -212,9 +212,9 @@ class LoadingProcessor:
         self._current_package = {field: package[field] for field in fields}
 
         if self._current_package['start_date']:
-            self._current_package['start_date'] = self._date_to_str(self._current_package['start_date'])
+            self._current_package['start_date'] = self._str_to_date(self._current_package['start_date'])
         if self._current_package['end_date']:
-            self._current_package['end_date'] = self._date_to_str(self._current_package['end_date'])
+            self._current_package['end_date'] = self._str_to_date(self._current_package['end_date'])
 
     def _check_loading(self):
 

@@ -332,6 +332,15 @@ class BaseModel:
 
         self.fitting_job_id = ''
 
+        x_indicators = model_parameters.get('x_indicators')
+        y_indicators = model_parameters.get('y_indicators')
+
+        if x_indicators:
+            self.x_indicators = self._data_processor.get_indicators_data_from_parameters(x_indicators)
+
+        if y_indicators:
+            self.y_indicators = self._data_processor.get_indicators_data_from_parameters(y_indicators)
+
         for key, value in model_parameters.items():
             if key in self._field_to_update:
                 setattr(self, key, value)
