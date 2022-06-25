@@ -39,6 +39,9 @@ class LoadingProcessor:
         self._initialize_loading_in_db(loading, packages)
         self._new_loading = False
 
+        # if self.type == 'full':
+        #     self._drop_raw_data()
+
         result_info = {'loading': self._loading_parameters, 'packages': self._packages}
 
         return self._replace_date_to_str_in_info(result_info)
@@ -50,12 +53,10 @@ class LoadingProcessor:
 
         self._initialize_current_package(package)
 
-        self._set_package_status('in_process')
+        overwrite = self._loading_parameters['type'] == 'full'
+        append = not self._loading_parameters['status'] == 'registered' and overwrite
 
-        overwrite = self._loading_parameters['status'] == 'registered' \
-                    and self._loading_parameters['type'] == 'full'
-        append = not self._loading_parameters['status'] == 'registered' \
-                    and self._loading_parameters['type'] == 'full'
+        self._set_package_status('in_process')
 
         raw_data = self._current_package['data']
 
@@ -173,9 +174,6 @@ class LoadingProcessor:
 
     def _initialize_loading_in_db(self, loading, packages):
 
-        # fields = ['id', 'type', 'status', 'quantity_of_packages',
-        #           'start_date', 'end_date']
-
         c_loading = loading.copy()
 
         if c_loading['start_date']:
@@ -187,6 +185,7 @@ class LoadingProcessor:
 
         fields = ['id', 'status', 'number', 'quantity_of_objects',
                   'start_date', 'end_date']
+        self.type = loading['type']
 
         c_packages = []
 
@@ -276,6 +275,9 @@ class LoadingProcessor:
         pd_data = pd_data.drop('ind', axis=1)
 
         return pd_data, indicators, analytics, analytic_keys
+
+    def _drop_raw_data(self):
+        self._db_connector.drop_collection('raw_data')
 
     def add_short_ids_to_raw_data(self, raw_data):
 

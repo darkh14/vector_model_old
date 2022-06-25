@@ -375,7 +375,7 @@ class Connector:
             del_filter = dict()
         collection.delete_many(del_filter)
 
-    def _drop_collection(self, collection_name):
+    def drop_collection(self, collection_name):
         collection = self.get_collection(collection_name)
         collection.drop()
 
