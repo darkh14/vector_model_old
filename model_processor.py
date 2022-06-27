@@ -203,6 +203,17 @@ class ModelProcessor:
 
         return result, indicator_description, graph_data
 
+    def drop_model(self, parameters):
+
+        model_description = parameters.get('model')
+
+        if not model_description:
+            raise ProcessorException('model is not in parameters')
+
+        self.model = self._get_model(model_description)
+
+        self.model.drop_model()
+
     def _get_model(self, model_description):
 
         model_type = model_description.get('type')
@@ -498,6 +509,13 @@ class BaseModel:
                             'fitting_job_id': fitting_job_id}
 
         return model_parameters
+
+    def drop_model(self):
+
+        if not self.initialized:
+            raise ProcessorException('Model is not initialized')
+
+        self._data_processor.delete_model(self.model_id)
 
     @abstractmethod
     def get_factor_analysis_data(self, inputs, output_indicator_id, step=0.3, get_graph=False):
@@ -1681,6 +1699,9 @@ class DataProcessor:
         raw_data = self._db_connector.read_raw_data(indicators, date_from, ad_filter)
         return raw_data
 
+    def delete_model(self, model_id):
+        self._db_connector.delete_model(model_id)
+
     @staticmethod
     def get_additional_data(raw_data):
         pd_data = pd.DataFrame(raw_data)
@@ -2516,6 +2537,16 @@ def get_rsme(parameters):
     rsme, mspe = processor.get_rsme(parameters)
 
     result = dict(status='OK', error_text='', rsme=rsme, mspe=mspe, description='model rsme is recieved')
+
+    return result
+
+
+def drop_model(parameters):
+
+    processor = ModelProcessor(parameters)
+    processor.drop_model(parameters)
+
+    result = dict(status='OK', error_text='', description='model is dropped')
 
     return result
 

@@ -123,6 +123,7 @@ class Processor:
         result['model_get_parameters'] = model_processor.get_model_parameters
         result['model_initialize'] = model_processor.initialize_model
         result['model_update'] = model_processor.update_model
+        result['model_drop'] = model_processor.drop_model
 
         return result
 

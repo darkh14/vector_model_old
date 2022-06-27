@@ -58,6 +58,7 @@ if __name__ == '__main__':
     request_dict[15] = 'model_get_parameters'
     request_dict[16] = 'model_initialize'
     request_dict[17] = 'model_update'
+    request_dict[18] = 'model_drop'
 
     print('Input number to choose action:')
     for key, value in request_dict.items():

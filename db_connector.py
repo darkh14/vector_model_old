@@ -257,6 +257,9 @@ class Connector:
     def delete_jobs(self, del_filter):
         self._delete_lines('background_jobs', del_filter)
 
+    def delete_model(self, model_id):
+        self._delete_lines('models', {'model_id': model_id})
+
     def initialize(self):
         self._connect()
         self._set_db()
