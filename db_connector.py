@@ -12,6 +12,7 @@ class Connector:
 
         self.db_name = parameters.get('db')
         self.db_id = parameters.get('db_id')
+
         if not self.db_name and not self.db_id:
             raise ProcessorException('parameter "db" or parameter "db_id" must be set')
 
@@ -30,6 +31,9 @@ class Connector:
 
         if not self.db_id:
             self.db_id = self._settings_controller.get_db_id(self.db_name)
+
+        print('Database {}, id:{}'.format(self.db_name, self.db_id))
+
         self.error = ''
 
         if initialize:
