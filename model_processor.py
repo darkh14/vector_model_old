@@ -257,6 +257,9 @@ class BaseModel:
         self.db_id = ''
 
         self._db_connector = database_connector
+
+        print('Database {}, id:{}'.format(self._db_connector.db_name, self._db_connector.db_id))
+
         self._data_processor = DataProcessor(self._db_connector)
 
         self.initialized = False

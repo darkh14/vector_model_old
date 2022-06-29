@@ -32,7 +32,7 @@ class Connector:
         if not self.db_id:
             self.db_id = self._settings_controller.get_db_id(self.db_name)
 
-        print('Database {}, id:{}'.format(self.db_name, self.db_id))
+        # print('Database {}, id:{}'.format(self.db_name, self.db_id))
 
         self.error = ''
 
