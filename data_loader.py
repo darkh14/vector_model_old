@@ -506,6 +506,6 @@ def get_db_connector(parameters=None):
         result = db_connector.Connector(parameters, initialize=True)
         DB_CONNECTORS.append(result)
     else:
-        result = DB_CONNECTORS[0]
+        result = result_list[0]
 
     return result

@@ -69,17 +69,6 @@ class ModelProcessor:
         drop_started_fitting = parameters.get('drop_started_fitting')
         self.model.update_model(model_description, drop_started_fitting=drop_started_fitting)
 
-    def load_data(self, parameters):
-
-        raw_data = parameters.get('data')
-
-        if not raw_data:
-            raise ProcessorException('"data" is not found in parameters')
-
-        overwrite = parameters.get('overwrite')
-
-        self._data_processor.load_data(raw_data, overwrite=overwrite)
-
     def fit(self, parameters):
         model_description = parameters.get('model')
 
@@ -2467,15 +2456,6 @@ class PeriodicDataProcessor(DataProcessor):
         return dataset
 
 
-@JobProcessor.job_processing
-def load_data(parameters):
-
-    processor = ModelProcessor(parameters)
-    processor.load_data(parameters)
-
-    return {'status': 'OK', 'error_text': '', 'description': 'model data loaded'}
-
-
 def initialize_model(parameters):
     processor = ModelProcessor(parameters)
     processor.initialize_model(parameters)
@@ -2585,7 +2565,7 @@ def get_db_connector(parameters):
         result = db_connector.Connector(parameters, initialize=True)
         DB_CONNECTORS.append(result)
     else:
-        result = DB_CONNECTORS[0]
+        result = result_list[0]
 
     return result
 
