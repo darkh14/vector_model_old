@@ -2571,6 +2571,8 @@ def get_db_connector(parameters):
 
     db_name = parameters.get('db')
 
+    print(' ----- Getting db connector name - {}'.format(db_name))
+
     if not db_name:
         raise 'Error of getting db connector. "db_name" not in parameters'
 
