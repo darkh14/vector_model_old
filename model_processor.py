@@ -36,16 +36,15 @@ import zipfile
 import shutil
 import datetime
 
-DB_CONNECTOR = None
+DB_CONNECTORS = []
 
 
 class ModelProcessor:
 
     def __init__(self, parameters):
 
-        set_db_connector(parameters)
-        self._db_connector = DB_CONNECTOR
-        self._data_processor = DataProcessor()
+        self._db_connector = get_db_connector(parameters)
+        self._data_processor = DataProcessor(self._db_connector)
 
         self.model = None
 
@@ -235,7 +234,7 @@ class ModelProcessor:
         if not model_class:
             raise ProcessorException('model type "{}" is not supported'.format(model_type))
 
-        model = model_class(model_description['id'], model_description)
+        model = model_class(model_description['id'], self._db_connector, model_description)
 
         return model
 
@@ -245,7 +244,7 @@ class BaseModel:
     __metaclass__ = ABCMeta
     type = ''
 
-    def __init__(self, model_id, model_parameters):
+    def __init__(self, model_id, database_connector, model_parameters):
 
         name = model_parameters.get('name') or ''
 
@@ -255,9 +254,10 @@ class BaseModel:
         model_filter = model_parameters.get('filter')
 
         self.model_id = model_id
+        self.db_id = ''
 
-        self._db_connector = DB_CONNECTOR
-        self._data_processor = DataProcessor()
+        self._db_connector = database_connector
+        self._data_processor = DataProcessor(self._db_connector)
 
         self.initialized = False
         self.is_fit = False
@@ -1208,9 +1208,9 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._data_processor = PeriodicDataProcessor()
+        self._data_processor = PeriodicDataProcessor(self._db_connector)
 
-        model_parameters = args[1]
+        model_parameters = args[2]
         model_description = self._data_processor.read_model_description_from_db(model_parameters['id'])
         if model_description:
             self.past_history = model_description.get('past_history')
@@ -1626,9 +1626,9 @@ class IdProcessor(LoadingProcessor):
 
 class DataProcessor:
 
-    def __init__(self):
+    def __init__(self, database_connector):
 
-        self._db_connector = DB_CONNECTOR
+        self._db_connector = database_connector
         self._id_processor = IdProcessor()
 
     def read_model_description_from_db(self, model_id):
@@ -2562,10 +2562,27 @@ def get_model_parameters(parameters):
     return result
 
 
-def set_db_connector(parameters):
-    global DB_CONNECTOR
-    if not DB_CONNECTOR:
-        DB_CONNECTOR = db_connector.Connector(parameters, initialize=True)
+def get_db_connector(parameters):
+
+    global DB_CONNECTORS
+
+    db_name = parameters.get('db')
+
+    if not db_name:
+        raise 'Error of getting db connector. "db_name" not in parameters'
+
+    current_settings_controller = settings_controller.Controller()
+    db_id = current_settings_controller.get_db_id(db_name)
+
+    result_list = list(filter(lambda x: x['db_id'] == db_id, DB_CONNECTORS))
+
+    if not result_list:
+        result = db_connector.Connector(parameters, initialize=True)
+        DB_CONNECTORS.append(result)
+    else:
+        result = DB_CONNECTORS[0]
+
+    return result
 
 
 def get_factor_analysis_data(parameters):

@@ -5,8 +5,9 @@ import hashlib
 import db_connector
 from logger import ProcessorException
 from job_processor import JobProcessor
+import settings_controller
 
-DB_CONNECTOR = None
+DB_CONNECTORS = []
 
 
 class LoadingProcessor:
@@ -17,8 +18,7 @@ class LoadingProcessor:
 
         print(self.loading_id)
 
-        set_db_connector(parameters)
-        self._db_connector = DB_CONNECTOR
+        self._db_connector = get_db_connector(parameters)
 
         self._loading_parameters = self._get_loading_parameters_from_db()
         self._current_package = None
@@ -488,7 +488,24 @@ def delete_loading_parameters(parameters):
     return {'status': 'OK', 'error_text': '', 'description': 'loading parameters removed'}
 
 
-def set_db_connector(parameters):
-    global DB_CONNECTOR
-    if not DB_CONNECTOR:
-        DB_CONNECTOR = db_connector.Connector(parameters, initialize=True)
+def get_db_connector(parameters=None):
+
+    global DB_CONNECTORS
+
+    db_name = parameters.get('db_id')
+
+    if not db_name:
+        raise 'Error of getting db connector. "db_name" not in parameters'
+
+    current_settings_controller = settings_controller.Controller()
+    db_id = current_settings_controller.get_db_id(db_name)
+
+    result_list = filter(lambda x: x['db_id'] == db_id, DB_CONNECTORS)
+
+    if not result_list:
+        result = db_connector.Connector(parameters, initialize=True)
+        DB_CONNECTORS.append(result)
+    else:
+        result = DB_CONNECTORS[0]
+
+    return result
