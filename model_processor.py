@@ -2574,7 +2574,7 @@ def get_db_connector(parameters):
     current_settings_controller = settings_controller.Controller()
     db_id = current_settings_controller.get_db_id(db_name)
 
-    result_list = list(filter(lambda x: x['db_id'] == db_id, DB_CONNECTORS))
+    result_list = list(filter(lambda x: x.db_id == db_id, DB_CONNECTORS))
 
     if not result_list:
         result = db_connector.Connector(parameters, initialize=True)
