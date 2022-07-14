@@ -339,6 +339,9 @@ class BaseModel:
         self.is_fit = False
         self.fitting_is_started = False
 
+        self.feature_importances_is_calculated = False
+        self.fi_calculation_is_started = False
+
         self.fitting_start_date = None
         self.fitting_date = None
 
