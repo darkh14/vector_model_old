@@ -254,13 +254,16 @@ class BaseModel:
         self.initialized = False
         self.is_fit = False
         self.feature_importances_is_calculated = False
+        self.fi_calculation_is_started = False
         self.fitting_date = None
         self.fitting_is_started = False
         self.fitting_start_date = None
         self.fitting_job_id = ''
+        self.feature_importances = None
 
         self._field_to_update = ['name', 'type', 'initialized', 'is_fit', 'fitting_is_started', 'fitting_start_date',
                                  'fitting_date', 'rsme', 'mspe', 'feature_importances_is_calculated',
+                                 'fitting_is_started',
                                  'filter', 'x_indicators', 'y_indicators', 'periods', 'organisations',
                                  'scenarios', 'x_columns', 'y_columns', 'x_analytics', 'y_analytics',
                                  'x_analytic_keys', 'y_analytic_keys', 'feature_importances', 'fitting_job_id']
@@ -278,6 +281,7 @@ class BaseModel:
 
             self.is_fit = False
             self.feature_importances_is_calculated = False
+            self.fi_calculation_is_started = False
             self.fitting_date = None
             self.fitting_is_started = False
             self.fitting_start_date = None
@@ -285,6 +289,7 @@ class BaseModel:
             self.initialized = False
             self.rsme = 0
             self.mspe=0
+            self.feature_importances = None
 
         if x_indicators:
             self.x_indicators = self._data_processor.get_indicators_data_from_parameters(x_indicators)
@@ -312,6 +317,8 @@ class BaseModel:
         self.initialized = True
         self.rsme = 0
         self.mspe = 0
+
+        self.feature_importances = None
 
         model_description = {field: getattr(self, field) for field in self._field_to_update}
 
@@ -417,10 +424,24 @@ class BaseModel:
             raise ProcessorException('Error of calculating feature importances. Model is not fit. '
                                      'Train the model before calculating')
 
+        self.fi_calculation_is_started = True
+        self.feature_importances_is_calculated = False
+
+        self._data_processor.write_model_field(self.model_id, 'fi_calculation_is_started',
+                                               self.fi_calculation_is_started)
+        self._data_processor.write_model_field(self.model_id, 'feature_importances_is_calculated',
+                                               self.feature_importances_is_calculated)
+
         result = self.calculate_fi_after_check(date_from=date_from, epochs=epochs, retrofit=retrofit,
                                                validation_split=validation_split)
 
         self.feature_importances_is_calculated = True
+        self.fi_calculation_is_started = False
+
+        self._data_processor.write_model_field(self.model_id, 'fi_calculation_is_started',
+                                               self.fi_calculation_is_started)
+        self._data_processor.write_model_field(self.model_id, 'feature_importances_is_calculated',
+                                               self.feature_importances_is_calculated)
 
         return result
 
@@ -474,6 +495,8 @@ class BaseModel:
             rsme = self._data_processor.read_model_field(self.model_id, 'rsme')
             mspe = self._data_processor.read_model_field(self.model_id, 'mspe')
 
+            feature_importances = self._data_processor.read_model_field(self.model_id, 'feature_importances')
+
             is_fit = self._data_processor.read_model_field(self.model_id, 'is_fit')
             fitting_is_started = self._data_processor.read_model_field(self.model_id, 'fitting_is_started')
             fitting_date = self._data_processor.read_model_field(self.model_id, 'fitting_date')
@@ -486,9 +509,15 @@ class BaseModel:
                 fitting_start_date = fitting_start_date.strftime('%d.%m.%Y %H:%M:%S')
 
             fitting_job_id = self._data_processor.read_model_field(self.model_id, 'fitting_job_id')
+
+            feature_importances_is_calculated = self._data_processor.read_model_field(self.model_id, 'feature_importances_is_calculated')
+            fi_calculation_is_started = self._data_processor.read_model_field(self.model_id, 'fi_calculation_is_started')
+
         else:
             rsme = 0
             mspe = 0
+
+            feature_importances = None
 
             is_fit = False
             fitting_is_started = False
@@ -496,11 +525,18 @@ class BaseModel:
 
             fitting_start_date = None
 
+            feature_importances_is_calculated = False
+            fi_calculation_is_started = False
+
             fitting_job_id = ''
+
 
         model_parameters = {'initialized': initialized, 'rsme': rsme, 'mspe': mspe, 'is_fit': is_fit,
                             'fitting_date': fitting_date,
                             'fitting_is_started': fitting_is_started, 'fitting_start_date': fitting_start_date,
+                            'feature_importances': feature_importances,
+                            'feature_importances_is_calculated': feature_importances_is_calculated,
+                            'fi_calculation_is_started': fi_calculation_is_started,
                             'fitting_job_id': fitting_job_id}
 
         return model_parameters
