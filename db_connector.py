@@ -141,9 +141,9 @@ class Connector:
 
         self.write_model_description(model_description)
 
-    def write_model_fi(self, model_id, fi):
+    def write_model_fi(self, model_id, fi, fi_grouped):
         model_description = self.read_model_description(model_id)
-        model_description['feature_importances'] = fi
+        model_description['feature_importances'] = {'expanded': fi, 'grouped': fi_grouped}
 
         self.write_model_description(model_description)
 

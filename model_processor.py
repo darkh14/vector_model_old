@@ -253,13 +253,14 @@ class BaseModel:
 
         self.initialized = False
         self.is_fit = False
+        self.feature_importances_is_calculated = False
         self.fitting_date = None
         self.fitting_is_started = False
         self.fitting_start_date = None
         self.fitting_job_id = ''
 
         self._field_to_update = ['name', 'type', 'initialized', 'is_fit', 'fitting_is_started', 'fitting_start_date',
-                                 'fitting_date', 'rsme', 'mspe',
+                                 'fitting_date', 'rsme', 'mspe', 'feature_importances_is_calculated',
                                  'filter', 'x_indicators', 'y_indicators', 'periods', 'organisations',
                                  'scenarios', 'x_columns', 'y_columns', 'x_analytics', 'y_analytics',
                                  'x_analytic_keys', 'y_analytic_keys', 'feature_importances', 'fitting_job_id']
@@ -276,6 +277,7 @@ class BaseModel:
             self.filter = model_filter
 
             self.is_fit = False
+            self.feature_importances_is_calculated = False
             self.fitting_date = None
             self.fitting_is_started = False
             self.fitting_start_date = None
@@ -406,9 +408,25 @@ class BaseModel:
     def predict(self, inputs, get_graph=False, graph_data=None, additional_parameters=None):
         """method for predicting data from model"""
 
-    @abstractmethod
     def calculate_feature_importances(self, date_from=None, epochs=1000, retrofit=False, validation_split=0.2):
-        """method for calculating feature importances"""
+
+        if not self.initialized:
+            raise ProcessorException('Error of calculating feature importances. Model is not initialized')
+
+        if not self.is_fit:
+            raise ProcessorException('Error of calculating feature importances. Model is not fit. '
+                                     'Train the model before calculating')
+
+        result = self.calculate_fi_after_check(date_from=date_from, epochs=epochs, retrofit=retrofit,
+                                               validation_split=validation_split)
+
+        self.feature_importances_is_calculated = True
+
+        return result
+
+    @abstractmethod
+    def calculate_fi_after_check(self, date_from=None, epochs=1000, retrofit=False, validation_split=0.2):
+        """method for calculating feature importances after checking"""
 
     def _calculate_fi_from_model(self, fi_model, x, y, x_columns):
         perm = PermutationImportance(fi_model, random_state=42).fit(x, y)
@@ -423,31 +441,16 @@ class BaseModel:
 
         return fi
 
-    def get_feature_importances(self, get_graph=False, extended=False):
-        fi = self._data_processor.read_feature_importances(self.model_id)
-        if not fi:
+    def get_feature_importances(self, get_graph=False):
+
+        if not self.feature_importances_is_calculated:
             raise ProcessorException('Feature importances is not calculated')
 
-        if not extended:
-            fi_pd = pd.DataFrame(fi)
-            fi_pd['count'] = 1
-            fi_pd['ind'] = fi_pd.index
-
-            fi_pd_group = fi_pd.groupby(['indicator_short_id'], as_index=False).sum()
-            fi_pd_group['feature_importance'] = fi_pd['feature_importance']/fi_pd['count']
-
-            fi_pd_ind = fi_pd[['indicator_short_id', 'ind']].groupby(['indicator_short_id'], as_index=False).min()
-
-            fi_pd_group = fi_pd_group.drop('ind', axis=1)
-            fi_pd_group = fi_pd_group.merge(fi_pd_ind, on='indicator_short_id', how='inner')
-            fi_pd_group = fi_pd_group.merge(fi_pd[['ind', 'indicator']], on='ind', how='inner')
-
-            fi_pd_group = fi_pd_group.sort_values(by='feature_importance', ascending=False)
-            fi = fi_pd_group.to_dict('records')
+        fi = self._data_processor.read_feature_importances(self.model_id)
 
         graph_bin = None
-        if get_graph:
-            graph_bin = self._get_fi_graph_bin(fi)
+        # if get_graph:
+        #     graph_bin = self._get_fi_graph_bin(fi)
 
         return fi, graph_bin
 
@@ -874,7 +877,7 @@ class NeuralNetworkModel(BaseModel):
 
         return outputs.to_dict('records'), description, graph_bin
 
-    def calculate_feature_importances(self, date_from=None, epochs=1000, retrofit=False, validation_split=0.2):
+    def calculate_fi_after_check(self, date_from=None, epochs=1000, retrofit=False, validation_split=0.2):
 
         if not retrofit:
             date_from = None
@@ -969,25 +972,51 @@ class NeuralNetworkModel(BaseModel):
     def _calculate_fi_from_model(self, fi_model, x, y, x_columns):
         perm = PermutationImportance(fi_model, random_state=42).fit(x, y)
 
-        fi = pd.DataFrame(perm.feature_importances_, columns=['feature_importance'])
+        fi = pd.DataFrame(perm.feature_importances_, columns=['error_delta'])
         fi['feature'] = x_columns
-        fi = fi.sort_values(by='feature_importance', ascending=False)
+        fi = fi.sort_values(by='error_delta', ascending=False)
 
-        fi = fi.loc[fi['feature']!='month'].copy()
+        fi = fi.loc[fi['feature'] != 'month'].copy()
 
         fi[['indicator_short_id', 'indicator']] = fi[['feature']].apply(self._data_processor.get_indicator_data_from_fi,
                                                                         axis=1, result_type='expand')
         fi[['analytic_key_id', 'analytics']] = fi[['feature']].apply(self._data_processor.get_analytics_data_from_fi,
                                                                      axis=1, result_type='expand')
 
+        fi['influence_factor'] = fi['error_delta'].apply(self._get_influence_factor_from_error_delta)
+
+        if_sum = fi['influence_factor'].sum()
+        fi['influence_factor'] = fi['influence_factor']/if_sum
+
+        fi_ind = fi.copy()
+        fi_ind['error_delta_plus'] = fi_ind['error_delta'].apply(lambda x: x if x > 0 else 0)
+
+        fi_ind['count'] = 1
+
+        fi_ind = fi_ind.groupby(['indicator_short_id'], as_index=False).sum()
+        fi_ind['indicator'] = fi_ind['indicator_short_id'].apply(self._data_processor.get_indicator_description_from_short_id)
+
+        fi_ind['error_delta'] = fi_ind['error_delta']/fi_ind['count']
+
+        fi_ind = fi_ind.drop(['error_delta_plus', 'count'], axis=1)
+
         fi = fi.to_dict('records')
-        self._data_processor.write_feature_importances(self.model_id, fi)
+        fi_ind = fi_ind.to_dict('records')
+        self._data_processor.write_feature_importances(self.model_id, fi, fi_ind)
 
         return fi
 
     @staticmethod
     def _calculate_rsme(y_true, y_pred):
         return np.sqrt(mean_squared_error(y_true, y_pred))
+
+    @staticmethod
+    def _get_influence_factor_from_error_delta(error_delta):
+
+        if error_delta < 0:
+            return 0
+        else:
+            return math.log(error_delta + 1)  # 1 - math.exp(-error_delta)
 
     def _get_scaler(self, retrofit=False, is_out=False):
 
@@ -1337,6 +1366,12 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
 
         return y, description, graph_bin
 
+    def calculate_fi_after_check(self, date_from=None, epochs=1000, retrofit=False, validation_split=0.2):
+
+        raise ProcessorException('Feature importances is not allowed for periodic neural network')
+
+        return None
+
     @staticmethod
     def _create_inner_model(inputs_number=0, outputs_number=0):
         multi_step_model = tf.keras.models.Sequential()
@@ -1553,7 +1588,7 @@ class LinearModel(BaseModel):
 
         return outputs.to_dict('records'), indicators_description, graph_bin
 
-    def calculate_feature_importances(self, **kwargs):
+    def calculate_fi_after_check(self, **kwargs):
 
         inner_model = self._get_inner_model(for_prediction=True)
 
@@ -1649,17 +1684,15 @@ class DataProcessor:
 
         return result
 
-    def get_indicator_description_from_id(self, indicator_id):
+    def get_indicator_description_from_type_id(self, indicator_type, indicator_id):
 
-        result = self._db_connector.read_indicator_from_type_id(indicator_id)
+        result = self._db_connector.read_indicator_from_type_id(indicator_type, indicator_id)
 
         return result
 
-    def get_indicator_short_id(self, indicator_id):
-        result = ''
-        indicator_line = self._db_connector.read_indicator_from_id(indicator_id)
-        if indicator_line:
-            result = indicator_line['short_id']
+    def get_indicator_description_from_short_id(self, short_id):
+
+        result = self._db_connector.read_indicator_from_short_id(short_id)
 
         return result
 
@@ -1798,8 +1831,8 @@ class DataProcessor:
         scaler_packed = pickle.dumps(scaler, protocol=pickle.HIGHEST_PROTOCOL)
         self._db_connector.write_model_scaler(model_id, scaler_packed, is_out)
 
-    def write_feature_importances(self, model_id, feature_importances):
-        self._db_connector.write_model_fi(model_id, feature_importances)
+    def write_feature_importances(self, model_id, feature_importances, feature_importances_grouped):
+        self._db_connector.write_model_fi(model_id, feature_importances, feature_importances_grouped)
 
     def read_feature_importances(self, model_id):
         model_description = self.read_model_description_from_db(model_id)
