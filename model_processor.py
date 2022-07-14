@@ -510,8 +510,10 @@ class BaseModel:
 
             fitting_job_id = self._data_processor.read_model_field(self.model_id, 'fitting_job_id')
 
-            feature_importances_is_calculated = self._data_processor.read_model_field(self.model_id, 'feature_importances_is_calculated')
-            fi_calculation_is_started = self._data_processor.read_model_field(self.model_id, 'fi_calculation_is_started')
+            feature_importances_is_calculated = bool(self._data_processor.read_model_field(self.model_id,
+                                                                                   'feature_importances_is_calculated'))
+            fi_calculation_is_started = bool(self._data_processor.read_model_field(self.model_id,
+                                                                                   'fi_calculation_is_started'))
 
         else:
             rsme = 0
