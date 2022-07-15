@@ -399,13 +399,12 @@ class BaseModel:
         self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
         self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
         self._data_processor.write_model_field(self.model_id, 'fitting_date', self.fitting_date)
+        self._data_processor.write_model_field(self.model_id, 'fitting_start_date', self.fitting_start_date)
+
         self._data_processor.write_model_field(self.model_id, 'feature_importances_is_calculated',
                                                self.feature_importances_is_calculated)
         self._data_processor.write_model_field(self.model_id, 'fi_calculation_is_started',
                                                self.fi_calculation_is_started)
-
-        self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
-        self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
 
         self.fit_model(epochs=epochs, validation_split=validation_split, retrofit=retrofit, date_from=date_from)
 
