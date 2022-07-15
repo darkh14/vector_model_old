@@ -396,8 +396,6 @@ class BaseModel:
         self.feature_importances_is_calculated = False
         self.fi_calculation_is_started = False
 
-        print('----pre-----fi is calculated--{}'.format(self.feature_importances_is_calculated))
-
         self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
         self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
         self._data_processor.write_model_field(self.model_id, 'fitting_date', self.fitting_date)
@@ -420,10 +418,6 @@ class BaseModel:
         self._data_processor.write_model_field(self.model_id, 'fitting_date', self.fitting_date)
         self._data_processor.write_model_field(self.model_id, 'fitting_start_date', self.fitting_start_date)
         self._data_processor.write_model_field(self.model_id, 'fitting_job_id', '')
-
-        self.feature_importances_is_calculated = self._data_processor.read_model_field(self.model_id, 'feature_importances_is_calculated')
-
-        print('----post-----fi is calculated--{}'.format(self.feature_importances_is_calculated))
 
     @abstractmethod
     def fit_model(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
