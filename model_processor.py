@@ -184,12 +184,22 @@ class ModelProcessor:
         if not output_indicator_id:
             raise ProcessorException('output indicator id is not in parameters')
 
-        # result, indicator_description, graph_data = self.model.get_factor_analysis_data(inputs,
-        #                                              ,
-        #                                              step=parameters.get('step'),
-        #                                              get_graph=parameters.get('get_graph'))
-        #
-        # return result, indicator_description, graph_data
+        input_indicators = parameters.get('input_indicators')
+
+        if not input_indicators:
+            raise ProcessorException('input indicators are not in parameters')
+
+        scenarios = parameters.get('scenarios')
+
+        if not scenarios:
+            raise ProcessorException('scenarios are not in parameters')
+
+        result, indicator_description, graph_data = self.model.get_factor_analysis_data(inputs, input_indicators,
+                                                                                        scenarios,
+                                                                                        output_indicator_id,
+                                                                                        get_graph=parameters.get('get_graph'))
+
+        return result, indicator_description, graph_data
 
     def drop_model(self, parameters):
 
@@ -385,6 +395,8 @@ class BaseModel:
         if self.fitting_is_started:
             raise ProcessorException('Fitting is always started')
 
+        print('job_id:  {}'.format(job_id))
+
         job_id = job_id or ''
 
         self.is_fit = False
@@ -401,6 +413,8 @@ class BaseModel:
         self._data_processor.write_model_field(self.model_id, 'fitting_date', self.fitting_date)
         self._data_processor.write_model_field(self.model_id, 'fitting_start_date', self.fitting_start_date)
 
+        self._data_processor.write_model_field(self.model_id, 'fitting_job_id', self.fitting_job_id)
+
         self._data_processor.write_model_field(self.model_id, 'feature_importances_is_calculated',
                                                self.feature_importances_is_calculated)
         self._data_processor.write_model_field(self.model_id, 'fi_calculation_is_started',
@@ -416,7 +430,6 @@ class BaseModel:
         self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
         self._data_processor.write_model_field(self.model_id, 'fitting_date', self.fitting_date)
         self._data_processor.write_model_field(self.model_id, 'fitting_start_date', self.fitting_start_date)
-        self._data_processor.write_model_field(self.model_id, 'fitting_job_id', '')
 
     @abstractmethod
     def fit_model(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
@@ -564,14 +577,18 @@ class BaseModel:
     def get_factor_analysis_data(self, inputs, input_indicators, scenarios, output_indicator_id, get_graph=False):
 
         if not self.initialized:
-            raise ProcessorException('Error of calculating feature importances. Model is not initialized')
+            raise ProcessorException('Error of calculating factor analysis data. Model is not initialized')
 
         if not self.is_fit:
-            raise ProcessorException('Error of calculating feature importances. Model is not fit. '
+            raise ProcessorException('Error of calculating factor analysis data. Model is not fit. '
                                      'Train the model before calculating')
 
+        return self.get_factor_analysis_data_from_model(inputs, input_indicators, scenarios, output_indicator_id,
+                                                        get_graph)
+
     @abstractmethod
-    def get_factor_analysis_data_from_model(self, inputs, input_indicators, scenarios, output_indicator_id, get_graph=False):
+    def get_factor_analysis_data_from_model(self, inputs, input_indicators, scenarios, output_indicator_id,
+                                            get_graph=False):
         """method for getting factor analysis data"""
 
     def _check_data(self, data, additional_parameters=None):
@@ -1107,10 +1124,15 @@ class NeuralNetworkModel(BaseModel):
     def get_factor_analysis_data_from_model(self, inputs, input_indicators, scenarios, output_indicator_id,
                                             get_graph=False):
 
+        result_data = []
+
         for indicator_element in input_indicators:
 
             ind_short_id = self._data_processor.get_indicator_short_id(indicator_element['type'],
                                                                        indicator_element['id'])
+
+            print(ind_short_id)
+
             if not ind_short_id:
                 raise ProcessorException('Indicator {}, type {}, id {} is not in model indicators')
 
@@ -1250,6 +1272,8 @@ class NeuralNetworkModel(BaseModel):
         # output = result.to_dict(orient='records')
         #
         # return output, indicators_description, graph_bin
+
+        return None, None, None
 
     def _check_data(self, data, additional_parameters=None):
 
@@ -1714,7 +1738,7 @@ class LinearModel(BaseModel):
     def _check_data(self, data):
         pass
 
-    def get_factor_analysis_data_from_model(self, inputs, output_indicator_id, step=0.3, get_graph=False):
+    def get_factor_analysis_data_from_model(self, inputs, input_indicators, scenarios, output_indicator_id, get_graph=False):
         return None, None, None
 
 
@@ -2683,6 +2707,8 @@ def get_factor_analysis_data(parameters):
 
     result = dict(status='OK', error_text='', result=fa, indicator_description=indicator_description,
                   description='model factor analysis data recieved')
+
+    get_graph = False
 
     if get_graph:
         result['graph_data'] = base64.b64encode(graph_bin).decode(encoding='utf-8')
