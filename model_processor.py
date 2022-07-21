@@ -184,12 +184,12 @@ class ModelProcessor:
         if not output_indicator_id:
             raise ProcessorException('output indicator id is not in parameters')
 
-        result, indicator_description, graph_data = self.model.get_factor_analysis_data(inputs,
-                                                     output_indicator_id,
-                                                     step=parameters.get('step'),
-                                                     get_graph=parameters.get('get_graph'))
-
-        return result, indicator_description, graph_data
+        # result, indicator_description, graph_data = self.model.get_factor_analysis_data(inputs,
+        #                                              ,
+        #                                              step=parameters.get('step'),
+        #                                              get_graph=parameters.get('get_graph'))
+        #
+        # return result, indicator_description, graph_data
 
     def drop_model(self, parameters):
 
@@ -561,8 +561,17 @@ class BaseModel:
 
         self._data_processor.delete_model(self.model_id)
 
+    def get_factor_analysis_data(self, inputs, input_indicators, scenarios, output_indicator_id, get_graph=False):
+
+        if not self.initialized:
+            raise ProcessorException('Error of calculating feature importances. Model is not initialized')
+
+        if not self.is_fit:
+            raise ProcessorException('Error of calculating feature importances. Model is not fit. '
+                                     'Train the model before calculating')
+
     @abstractmethod
-    def get_factor_analysis_data(self, inputs, output_indicator_id, step=0.3, get_graph=False):
+    def get_factor_analysis_data_from_model(self, inputs, input_indicators, scenarios, output_indicator_id, get_graph=False):
         """method for getting factor analysis data"""
 
     def _check_data(self, data, additional_parameters=None):
@@ -1095,143 +1104,152 @@ class NeuralNetworkModel(BaseModel):
                            metrics=['RootMeanSquaredError'])
         return model_copy
 
-    def get_factor_analysis_data(self, inputs, output_indicator_id, step=0.3, get_graph=False):
+    def get_factor_analysis_data_from_model(self, inputs, input_indicators, scenarios, output_indicator_id,
+                                            get_graph=False):
 
-        data = pd.DataFrame(inputs)
-        data = self._data_processor.add_short_ids_to_raw_data(data)
+        for indicator_element in input_indicators:
 
-        additional_data = {'x_indicators': self.x_indicators,
-                           'y_indicators': self.y_indicators,
-                           'periods': self.periods,
-                           'organisations': self.organisations,
-                           'scenarios': self.scenarios,
-                           'x_columns': self.x_columns + self.y_columns,
-                           'y_columns': self.y_columns}
+            ind_short_id = self._data_processor.get_indicator_short_id(indicator_element['type'],
+                                                                       indicator_element['id'])
+            if not ind_short_id:
+                raise ProcessorException('Indicator {}, type {}, id {} is not in model indicators')
 
-        indicators_description = self.x_indicators + self.y_indicators
 
-        period_columns = list()
-        for indicator_data in self.x_indicators:
-            if indicator_data['period_shift']:
-                column_name = 'period_{}{}'.format('m' if indicator_data['period_shift'] < 0 else 'p',
-                                                   -indicator_data['period_shift'] if indicator_data['period_shift'] < 0
-                                                   else indicator_data['period_shift'])
+        # data = pd.DataFrame(inputs)
+        # data = self._data_processor.add_short_ids_to_raw_data(data)
 
-                if column_name not in period_columns:
-                    period_columns.append(column_name)
-
-        inner_model = self._get_inner_model()
-
-        step = step or 0.3
-
-        output_col_list = list(filter(lambda dt: dt['id'] == output_indicator_id, self.y_indicators))
-
-        if not output_col_list:
-            raise ProcessorException('Output indicator id not in model')
-
-        output_column_name = 'ind_' + output_col_list[0]['short_id']
-
-        result = pd.DataFrame()
-
-        multistep = False
-        if isinstance(step, list) or isinstance(step, tuple):
-            steps = step
-            if 0 not in steps:
-                steps.append(0)
-            multistep = True
-        else:
-            steps = [-step, 0, step]
-
-        steps.sort()
-
-        for indicator_data in self.x_indicators:
-
-            if indicator_data['period_shift']:
-                continue
-
-            cur_data = pd.DataFrame()
-
-            for step in steps:
-
-                raw_cur_data = data.copy()
-
-                if step:
-                    cur_data_ind = raw_cur_data.loc[raw_cur_data['indicator_short_id']==indicator_data['short_id']].copy()
-                    cur_data_ind['value'] = cur_data_ind['value']*(1 + step)
-                    raw_cur_data.loc[raw_cur_data['indicator_short_id'] == indicator_data['short_id']] = cur_data_ind
-
-                encode_fields = None
-                x, x_y_pd = self._data_processor.get_x_for_prediction(raw_cur_data, additional_data, encode_fields)
-
-                columns_to_drop = self.y_columns + ['organisation', 'scenario', 'period', 'periodicity',
-                                                    'year'] + period_columns
-
-                x = x_y_pd.drop(columns_to_drop, axis=1).to_numpy()
-
-                y = inner_model.predict(x)
-
-                y_pd = pd.DataFrame(y, columns=self.y_columns)
-                y = y_pd[[output_column_name]].to_numpy()
-
-                x_y_pd[output_column_name] = y
-
-                input_indicator_columns = list()
-                if indicator_data['use_analytics']:
-                    for col_name in self.x_columns:
-
-                        if col_name=='month':
-                            continue
-
-                        col_list = col_name.split('_')
-                        if col_list[1] == indicator_data['short_id'] and len(col_list) == 4:
-                            input_indicator_columns.append(col_name)
-                else:
-                    col_name = 'ind_' + indicator_data['short_id']
-                    if indicator_data.get('period_number'):
-                        col_name += '_p_f{}'.format(indicator_data['period_number'])
-                    input_indicator_columns.append(col_name)
-
-                if not len(cur_data):
-                    cur_data = x_y_pd.copy()
-                    cur_data['indicator_id'] = indicator_data['id']
-                    columns_to_drop = ['organisation', 'scenario', 'periodicity', 'year',
-                                       'month'] + period_columns + self.x_columns + self.y_columns
-                    cur_data = cur_data.drop(columns_to_drop, axis=1)
-
-                cur_data['koef'] = step
-                cur_data['out_value'] = x_y_pd[output_column_name]
-                cur_data['in_value'] = x_y_pd[input_indicator_columns].apply(sum, axis=1)
-
-                if not len(result):
-                    result = cur_data.copy()
-                else:
-                    result = pd.concat([result, cur_data], axis=0)
-
-        result_min = result.loc[result['koef'] == steps[0]].groupby('indicator_id', as_index=False).sum()
-        result_min = result_min.rename({'out_value': 'out_value_min'}, axis=1)
-        result_min = result_min.drop(['koef', 'in_value'], axis=1)
-        result_max = result.loc[result['koef'] == steps[-1]].groupby('indicator_id', as_index=False).sum()
-        result_max = result_max.rename({'out_value': 'out_value_max'}, axis=1)
-        result_max = result_max.drop(['koef', 'in_value'], axis=1)
-
-        result = result.merge(result_min, on=['indicator_id'], how='left')
-        result = result.merge(result_max, on=['indicator_id'], how='left')
-        result['max_delta'] = abs(result['out_value_max'] - result['out_value_min'])
-
-        result = result.sort_values(by='max_delta', ascending=False)
-
-        result = result.drop(['out_value_min'], axis=1)
-        result = result.drop(['out_value_max'], axis=1)
-
-        graph_bin = None
-        if get_graph:
-            graph_data = self._get_data_for_fa_graph(result, indicators_description, output_indicator_id, steps)
-            graph_bin = self._get_fa_graph_bin(graph_data, steps)
-
-        result = result.drop(['max_delta'], axis=1)
-        output = result.to_dict(orient='records')
-
-        return output, indicators_description, graph_bin
+        # additional_data = {'x_indicators': self.x_indicators,
+        #                    'y_indicators': self.y_indicators,
+        #                    'periods': self.periods,
+        #                    'organisations': self.organisations,
+        #                    'scenarios': self.scenarios,
+        #                    'x_columns': self.x_columns + self.y_columns,
+        #                    'y_columns': self.y_columns}
+        #
+        # indicators_description = self.x_indicators + self.y_indicators
+        #
+        # period_columns = list()
+        # for indicator_data in self.x_indicators:
+        #     if indicator_data['period_shift']:
+        #         column_name = 'period_{}{}'.format('m' if indicator_data['period_shift'] < 0 else 'p',
+        #                                            -indicator_data['period_shift'] if indicator_data['period_shift'] < 0
+        #                                            else indicator_data['period_shift'])
+        #
+        #         if column_name not in period_columns:
+        #             period_columns.append(column_name)
+        #
+        # inner_model = self._get_inner_model()
+        #
+        # step = step or 0.3
+        #
+        # output_col_list = list(filter(lambda dt: dt['id'] == output_indicator_id, self.y_indicators))
+        #
+        # if not output_col_list:
+        #     raise ProcessorException('Output indicator id not in model')
+        #
+        # output_column_name = 'ind_' + output_col_list[0]['short_id']
+        #
+        # result = pd.DataFrame()
+        #
+        # multistep = False
+        # if isinstance(step, list) or isinstance(step, tuple):
+        #     steps = step
+        #     if 0 not in steps:
+        #         steps.append(0)
+        #     multistep = True
+        # else:
+        #     steps = [-step, 0, step]
+        #
+        # steps.sort()
+        #
+        # for indicator_data in self.x_indicators:
+        #
+        #     if indicator_data['period_shift']:
+        #         continue
+        #
+        #     cur_data = pd.DataFrame()
+        #
+        #     for step in steps:
+        #
+        #         raw_cur_data = data.copy()
+        #
+        #         if step:
+        #             cur_data_ind = raw_cur_data.loc[raw_cur_data['indicator_short_id']==indicator_data['short_id']].copy()
+        #             cur_data_ind['value'] = cur_data_ind['value']*(1 + step)
+        #             raw_cur_data.loc[raw_cur_data['indicator_short_id'] == indicator_data['short_id']] = cur_data_ind
+        #
+        #         encode_fields = None
+        #         x, x_y_pd = self._data_processor.get_x_for_prediction(raw_cur_data, additional_data, encode_fields)
+        #
+        #         columns_to_drop = self.y_columns + ['organisation', 'scenario', 'period', 'periodicity',
+        #                                             'year'] + period_columns
+        #
+        #         x = x_y_pd.drop(columns_to_drop, axis=1).to_numpy()
+        #
+        #         y = inner_model.predict(x)
+        #
+        #         y_pd = pd.DataFrame(y, columns=self.y_columns)
+        #         y = y_pd[[output_column_name]].to_numpy()
+        #
+        #         x_y_pd[output_column_name] = y
+        #
+        #         input_indicator_columns = list()
+        #         if indicator_data['use_analytics']:
+        #             for col_name in self.x_columns:
+        #
+        #                 if col_name=='month':
+        #                     continue
+        #
+        #                 col_list = col_name.split('_')
+        #                 if col_list[1] == indicator_data['short_id'] and len(col_list) == 4:
+        #                     input_indicator_columns.append(col_name)
+        #         else:
+        #             col_name = 'ind_' + indicator_data['short_id']
+        #             if indicator_data.get('period_number'):
+        #                 col_name += '_p_f{}'.format(indicator_data['period_number'])
+        #             input_indicator_columns.append(col_name)
+        #
+        #         if not len(cur_data):
+        #             cur_data = x_y_pd.copy()
+        #             cur_data['indicator_id'] = indicator_data['id']
+        #             columns_to_drop = ['organisation', 'scenario', 'periodicity', 'year',
+        #                                'month'] + period_columns + self.x_columns + self.y_columns
+        #             cur_data = cur_data.drop(columns_to_drop, axis=1)
+        #
+        #         cur_data['koef'] = step
+        #         cur_data['out_value'] = x_y_pd[output_column_name]
+        #         cur_data['in_value'] = x_y_pd[input_indicator_columns].apply(sum, axis=1)
+        #
+        #         if not len(result):
+        #             result = cur_data.copy()
+        #         else:
+        #             result = pd.concat([result, cur_data], axis=0)
+        #
+        # result_min = result.loc[result['koef'] == steps[0]].groupby('indicator_id', as_index=False).sum()
+        # result_min = result_min.rename({'out_value': 'out_value_min'}, axis=1)
+        # result_min = result_min.drop(['koef', 'in_value'], axis=1)
+        # result_max = result.loc[result['koef'] == steps[-1]].groupby('indicator_id', as_index=False).sum()
+        # result_max = result_max.rename({'out_value': 'out_value_max'}, axis=1)
+        # result_max = result_max.drop(['koef', 'in_value'], axis=1)
+        #
+        # result = result.merge(result_min, on=['indicator_id'], how='left')
+        # result = result.merge(result_max, on=['indicator_id'], how='left')
+        # result['max_delta'] = abs(result['out_value_max'] - result['out_value_min'])
+        #
+        # result = result.sort_values(by='max_delta', ascending=False)
+        #
+        # result = result.drop(['out_value_min'], axis=1)
+        # result = result.drop(['out_value_max'], axis=1)
+        #
+        # graph_bin = None
+        # if get_graph:
+        #     graph_data = self._get_data_for_fa_graph(result, indicators_description, output_indicator_id, steps)
+        #     graph_bin = self._get_fa_graph_bin(graph_data, steps)
+        #
+        # result = result.drop(['max_delta'], axis=1)
+        # output = result.to_dict(orient='records')
+        #
+        # return output, indicators_description, graph_bin
 
     def _check_data(self, data, additional_parameters=None):
 
@@ -1418,6 +1436,12 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
     def calculate_fi_after_check(self, date_from=None, epochs=1000, retrofit=False, validation_split=0.2):
 
         raise ProcessorException('Feature importances is not allowed for periodic neural network')
+
+        return None
+
+    def get_factor_analysis_data_from_model(self, inputs, input_indicators, scenarios, output_indicator_id, get_graph=False):
+
+        raise ProcessorException('factor analysis is not allowed for periodic neural network')
 
         return None
 
@@ -1690,7 +1714,7 @@ class LinearModel(BaseModel):
     def _check_data(self, data):
         pass
 
-    def get_factor_analysis_data(self, inputs, output_indicator_id, step=0.3, get_graph=False):
+    def get_factor_analysis_data_from_model(self, inputs, output_indicator_id, step=0.3, get_graph=False):
         return None, None, None
 
 
@@ -2306,7 +2330,7 @@ class DataProcessor:
 
         return '{:02}.{:02}.{}'.format(day, month, year)
 
-    def _get_indicator_short_id(self, indicator_type, indicator_id):
+    def get_indicator_short_id(self, indicator_type, indicator_id):
         value_str = indicator_id + indicator_type
         return self._db_connector.get_short_id(value_str)
 

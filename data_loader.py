@@ -492,7 +492,7 @@ def get_db_connector(parameters=None):
 
     global DB_CONNECTORS
 
-    db_name = parameters.get('db_id')
+    db_name = parameters.get('db')
 
     if not db_name:
         raise 'Error of getting db connector. "db_name" not in parameters'
@@ -500,7 +500,7 @@ def get_db_connector(parameters=None):
     current_settings_controller = settings_controller.Controller()
     db_id = current_settings_controller.get_db_id(db_name)
 
-    result_list = filter(lambda x: x['db_id'] == db_id, DB_CONNECTORS)
+    result_list = list(filter(lambda x: x.db_id == db_id, DB_CONNECTORS))
 
     if not result_list:
         result = db_connector.Connector(parameters, initialize=True)
