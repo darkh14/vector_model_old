@@ -346,6 +346,15 @@ class BaseModel:
         self.organisations = []
         self.scenarios = []
 
+        self.x_columns = []
+        self.y_columns = []
+
+        self.x_analytics = []
+        self.y_analytics = []
+
+        self.x_analytic_keys = []
+        self.y_analytic_keys = []
+
         self.is_fit = False
         self.fitting_is_started = False
 
@@ -948,7 +957,9 @@ class NeuralNetworkModel(BaseModel):
         description = {'x_indicators': self.x_indicators,
                        'y_indicators': self.y_indicators,
                        'x_analytics': self.x_analytics,
-                       'y_analytics': self.y_analytics}
+                       'y_analytics': self.y_analytics,
+                       'x_analytic_keys': self.x_analytic_keys,
+                       'y_analytic_keys': self.y_analytic_keys}
 
         return outputs.to_dict('records'), description, graph_bin
 
@@ -1125,30 +1136,54 @@ class NeuralNetworkModel(BaseModel):
                                             get_graph=False):
 
         result_data = []
+        used_indicator_ids = []
+
+        additional_data = {'x_indicators': self.x_indicators,
+                           'y_indicators': self.y_indicators,
+                           'periods': self.periods,
+                           'organisations': self.organisations,
+                           'scenarios': self.scenarios,
+                           'x_columns': self.x_columns + self.y_columns,
+                           'y_columns': self.y_columns}
+
+        indicators_description = self.x_indicators + self.y_indicators
 
         for indicator_element in input_indicators:
 
             ind_short_id = self._data_processor.get_indicator_short_id(indicator_element['type'],
                                                                        indicator_element['id'])
 
-            print(ind_short_id)
-
             if not ind_short_id:
                 raise ProcessorException('Indicator {}, type {}, id {} is not in model indicators')
 
+            input_data = pd.DataFrame(inputs)
 
-        # data = pd.DataFrame(inputs)
-        # data = self._data_processor.add_short_ids_to_raw_data(data)
+            input_data = self._data_processor.add_short_ids_to_raw_data(input_data)
 
-        # additional_data = {'x_indicators': self.x_indicators,
-        #                    'y_indicators': self.y_indicators,
-        #                    'periods': self.periods,
-        #                    'organisations': self.organisations,
-        #                    'scenarios': self.scenarios,
-        #                    'x_columns': self.x_columns + self.y_columns,
-        #                    'y_columns': self.y_columns}
+            input_data['current_indicator_short_id'] = ind_short_id
+            input_data['used_indicator_ids'] = None
+            input_data['used_indicator_ids'] = input_data['used_indicator_ids'].apply(lambda x: used_indicator_ids)
+
+            input_data['value'] = input_data[['value_base',
+                                              'value_calculated',
+                                              'used_indicator_ids',
+                                              'indicator_short_id',
+                                              'current_indicator_short_id']].apply(self._get_value_for_fa, axis=1)
+
+            input_data = input_data.drop(['value_base', 'value_calculated', 'used_indicator_ids',
+                                          'current_indicator_short_id'], axis=1)
+
+            # scenario, periodicity
+            #
+            # x, x_y_pd = self._data_processor.get_x_for_prediction(raw_cur_data, additional_data, encode_fields)
+
+
+            used_indicator_ids.append(ind_short_id)
+
+
+
         #
-        # indicators_description = self.x_indicators + self.y_indicators
+
         #
         # period_columns = list()
         # for indicator_data in self.x_indicators:
@@ -1298,6 +1333,21 @@ class NeuralNetworkModel(BaseModel):
         #         errors.append('analytic key id {} not found in input data'.format(el['id']))
 
         return not errors, errors
+
+    @staticmethod
+    def _get_value_for_fa(input_parameters):
+
+        (value_based, value_calculated, used_indicator_ids,
+         indicator_short_id, current_indicator_short_id) = input_parameters
+        value = 0
+        if current_indicator_short_id == indicator_short_id:
+            value = value_calculated - value_based
+        elif current_indicator_short_id in used_indicator_ids:
+            value = value_calculated
+        else:
+            value = value_based
+
+        return value
 
     @staticmethod
     def _create_inner_model(inputs_number, outputs_number):
