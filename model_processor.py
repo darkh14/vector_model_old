@@ -804,7 +804,7 @@ class BaseModel:
         descr_lines = list(filter(lambda x: x['id'] == indicator_id, self.x_indicators + self.y_indicators))
         return descr_lines[0]['name']
 
-    def _get_fa_graph_bin(self, values):
+    def _get_fa_graph_bin(self, values, out_indicator_name):
 
         x_list = list(values['title'])
         y_list = list(values['value'])
@@ -859,7 +859,7 @@ class BaseModel:
 
         f = fig.update_layout(
             title=
-            {'text': '<b>Waterfall chart</b><br><span style="color:#666666">Факторный анализ</span>'},
+            {'text': '<b>Факторный анализ</b><br><span style="color:#666666">{}</span>'.format(out_indicator_name)},
             showlegend=False,
             height=650,
             font={
@@ -1206,10 +1206,10 @@ class NeuralNetworkModel(BaseModel):
 
             used_indicator_ids.append(ind_short_id)
 
-        graph_bin = None
+        graph_string = ''
         if get_graph:
             graph_data = self._get_data_for_fa_graph(result_data, outputs)
-            graph_string = self._get_fa_graph_bin(graph_data)
+            graph_string = self._get_fa_graph_bin(graph_data, output_indicator['name'])
 
         return result_data, graph_string
 
