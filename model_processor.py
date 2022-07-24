@@ -29,6 +29,8 @@ from tensorflow import keras
 
 import matplotlib.pyplot as plt
 import matplotlib
+import plotly.graph_objects as go
+
 import base64
 
 import pickle
@@ -179,27 +181,28 @@ class ModelProcessor:
         if not inputs:
             raise ProcessorException('inputs is not in parameters')
 
-        output_indicator_id = parameters.get('output_indicator_id')
+        output_indicator = parameters.get('output_indicator')
 
-        if not output_indicator_id:
-            raise ProcessorException('output indicator id is not in parameters')
+        if not output_indicator:
+            raise ProcessorException('output indicator is not in parameters')
 
         input_indicators = parameters.get('input_indicators')
 
         if not input_indicators:
             raise ProcessorException('input indicators are not in parameters')
 
-        scenarios = parameters.get('scenarios')
+        outputs = parameters.get('outputs')
 
-        if not scenarios:
-            raise ProcessorException('scenarios are not in parameters')
+        if not outputs:
+            raise ProcessorException('outputs are not in parameters')
 
-        result, indicator_description, graph_data = self.model.get_factor_analysis_data(inputs, input_indicators,
-                                                                                        scenarios,
-                                                                                        output_indicator_id,
-                                                                                        get_graph=parameters.get('get_graph'))
+        result, graph_data = self.model.get_factor_analysis_data(inputs,
+                                                                 input_indicators,
+                                                                 outputs,
+                                                                 output_indicator,
+                                                                 get_graph=parameters.get('get_graph'))
 
-        return result, indicator_description, graph_data
+        return result, graph_data
 
     def drop_model(self, parameters):
 
@@ -583,7 +586,7 @@ class BaseModel:
 
         self._data_processor.delete_model(self.model_id)
 
-    def get_factor_analysis_data(self, inputs, input_indicators, scenarios, output_indicator_id, get_graph=False):
+    def get_factor_analysis_data(self, inputs, input_indicators, outputs, output_indicator_id, get_graph=False):
 
         if not self.initialized:
             raise ProcessorException('Error of calculating factor analysis data. Model is not initialized')
@@ -592,11 +595,11 @@ class BaseModel:
             raise ProcessorException('Error of calculating factor analysis data. Model is not fit. '
                                      'Train the model before calculating')
 
-        return self.get_factor_analysis_data_from_model(inputs, input_indicators, scenarios, output_indicator_id,
+        return self.get_factor_analysis_data_from_model(inputs, input_indicators, outputs, output_indicator_id,
                                                         get_graph)
 
     @abstractmethod
-    def get_factor_analysis_data_from_model(self, inputs, input_indicators, scenarios, output_indicator_id,
+    def get_factor_analysis_data_from_model(self, inputs, input_indicators, outputs, output_indicator_id,
                                             get_graph=False):
         """method for getting factor analysis data"""
 
@@ -780,108 +783,101 @@ class BaseModel:
 
         return np.sqrt(np.nanmean(np.square(((y_true - y_pred) / y_p))))
 
-    def _get_data_for_fa_graph(self, outputs, indicators_description, output_indicator_id, steps):
+    def _get_data_for_fa_graph(self, result_data, outputs):
 
-        result = outputs.copy()
-        result['count'] = 1
-        result_group = result.groupby(by=['indicator_id', 'koef'], as_index=False).sum()
+        result_data = pd.DataFrame(result_data)
+        result_data['title'] = result_data['indicator'].apply(lambda x: x['name'])
+        result_data['order'] = list(range(2, result_data.shape[0]+2))
 
-        result_group['reverse_delta'] = -result_group['max_delta']
-        result_group = result_group.sort_values(by=['reverse_delta', 'koef'])
+        result_data.drop(['indicator'], axis=1, inplace=True)
 
-        num_columns = list(result_group.columns)
-        num_columns = [col for col in num_columns if col not in ['indicator_id', 'koef', 'count']]
+        base_line = {'title': 'Базовый', 'value': outputs['based']['value'], 'order': 1}
+        calculated_line = {'title': 'Расчетный', 'value': outputs['calculated']['value'], 'order': result_data.shape[0]+2}
 
-        for col in num_columns:
-            result_group[col] = result_group[col]/result_group['count']
+        result_data = pd.concat([result_data, pd.DataFrame([base_line, calculated_line])])
 
-        result_null = result_group.loc[result_group['koef'] == 0]
-        result_null = result_null[['indicator_id', 'out_value']]
-        result_null = result_null.rename({'out_value': 'out_value_null'}, axis=1)
+        result_data = result_data.sort_values('order')
 
-        result_group = result_group.merge(result_null, on=['indicator_id'], how='left')
-        result_group = result_group.drop(['count', 'reverse_delta'], axis=1)
-
-        result_group['value_percent'] = result_group[['out_value', 'out_value_null']].apply(lambda x:
-                                                                        100*x[0]/x[1] if x[1] else 0, axis=1)
-
-        result_group['indicator'] = result_group['indicator_id'].apply(self._get_indicator_name_from_description)
-
-        return result_group
+        return result_data
 
     def _get_indicator_name_from_description(self, indicator_id):
         descr_lines = list(filter(lambda x: x['id'] == indicator_id, self.x_indicators + self.y_indicators))
         return descr_lines[0]['name']
 
-    def _make_fa_graph(self, dataset, steps):
+    def _get_fa_graph_bin(self, values):
 
-        indicator_descr = dataset[['indicator', 'indicator_id']].groupby(by=['indicator', 'indicator_id'],
-                                                                         as_index=False).max()
+        x_list = list(values['title'])
+        y_list = list(values['value'])
 
-        indicators = list(indicator_descr['indicator'].values)
+        text_list = []
+        for index, item in enumerate(y_list):
+            if item > 0 and index != 0 and index != len(y_list) - 1:
+                text_list.append('+{0:.2f}'.format(y_list[index]))
+            else:
+                text_list.append('{0:.2f}'.format(y_list[index]))
 
-        ind_list = [el.replace(' ', '\n') for el in indicators]
+        for index, item in enumerate(text_list):
+            if item[0] == '+' and index != 0 and index != len(text_list) - 1:
+                text_list[index] = '<span style="color:#2ca02c">' + text_list[index] + '</span>'
+            elif item[0] == '-' and index != 0 and index != len(text_list) - 1:
+                text_list[index] = '<span style="color:#d62728">' + text_list[index] + '</span>'
+            if index == 0 or index == len(text_list) - 1:
+                text_list[index] = '<b>' + text_list[index] + '</b>'
 
-        x0 = dataset['indicator_id'].unique()
+        dict_list = []
+        for i in range(0, 1200, 200):
+            dict_list.append(dict(
+                type="line",
+                line=dict(
+                    color="#666666",
+                    dash="dot"
+                ),
+                x0=-0.5,
+                y0=i,
+                x1=6,
+                y1=i,
+                line_width=1,
+                layer="below"))
 
-        fig, ax = plt.subplots()
+        measure = ["absolute", *(values.shape[0]-2)*["relative"], "total"]
 
-        x_shifts = [(el-len(steps)/2)/7 for el in list(range(len(steps)))]
-        ind = 0
-        x_ticks_is_set = False
+        fig = go.Figure(go.Waterfall(
+            name="Factor analysis", orientation="v",
+            measure=["absolute", *3 * ["relative"], "total"],
+            x=x_list,
+            y=y_list,
+            text=text_list,
+            textposition="outside",
+            connector={"line": {"color": 'rgba(0,0,0,0)'}},
+            increasing={"marker": {"color": "#2ca02c"}},
+            decreasing={"marker": {"color": "#d62728"}},
+            totals={'marker': {"color": "#9467bd"}},
+            textfont={"family": "Open Sans, light",
+                      "color": "black"
+                      }
+        ))
 
-        for step in steps:
-            y = dataset.loc[dataset['koef'] == step]['value_percent'].to_numpy()
-            x = [(el + x_shifts[ind]) for el in list(range(len(x0)))]
-            ax.bar(x, y, width=0.05*len(steps) /(0.5*len(x0)), align='edge', label="{:.0f}".format(step*100) + ' %')
-            if ind > len(steps)/2 - 1 and not x_ticks_is_set:
-                ax.set_xticks(x)
-                x_ticks_is_set = True
-                ax.set_xticklabels(ind_list)
-            ind += 1
+        f = fig.update_layout(
+            title=
+            {'text': '<b>Waterfall chart</b><br><span style="color:#666666">Факторный анализ</span>'},
+            showlegend=False,
+            height=650,
+            font={
+                'family': 'Open Sans, light',
+                'color': 'black',
+                'size': 14
+            },
+            plot_bgcolor='rgba(0,0,0,0)',
+            yaxis_title="руб.",
+            shapes=dict_list
+        )
 
-        # ax.set_xlabel(indicators)
+        fig.update_xaxes(tickangle=-45, tickfont=dict(family='Open Sans, light', color='black', size=14))
+        fig.update_yaxes(tickangle=0, tickfont=dict(family='Open Sans, light', color='black', size=14))
 
-        ax.set_facecolor('seashell')
-        fig.set_facecolor('floralwhite')
-        fig.set_figwidth(20)  # ширина Figure
-        fig.set_figheight(10)  # высота Figure
+        graph_str = fig.to_html()
 
-        ax.set_ylabel('Изменение выходного показателя, %')
-
-        ax.set_title('Факторный анализ')
-
-        # ax.set_ylim([0, 110])
-        # ax.set_xlim([-0.5, len(x) + 1])
-
-        ax.legend(loc=(1, 0.5), title='Изменение входных\n показателей, %')
-
-        for rect in ax.patches:
-
-            y_value = rect.get_y() + rect.get_height()
-            x_value = rect.get_x() + rect.get_width() / 2
-
-            label = "{:.0f}".format(rect.get_height())
-
-            ax.annotate(
-                label,  # Use `label` as label
-                (x_value, y_value),  # Place label at end of the bar
-                xytext=(0, 0),  # Vertically shift label by `space`
-                textcoords="offset points",  # Interpret `xytext` as offset in points
-                ha='center',  # Horizontally center label
-                va='bottom',
-                fontsize=6)  # Vertically align label differently for
-            previous_label = rect.get_height()
-
-        fig.savefig(self.graph_fa_file_name)
-
-    def _get_fa_graph_bin(self, values, steps):
-
-        self._make_fa_graph(values, steps)
-
-        graph_bin = self._read_graph_file(graph_type='fa')
-
-        return graph_bin
+        return graph_str
 
 
 class NeuralNetworkModel(BaseModel):
@@ -1132,7 +1128,7 @@ class NeuralNetworkModel(BaseModel):
                            metrics=['RootMeanSquaredError'])
         return model_copy
 
-    def get_factor_analysis_data_from_model(self, inputs, input_indicators, scenarios, output_indicator_id,
+    def get_factor_analysis_data_from_model(self, inputs, input_indicators, outputs, output_indicator,
                                             get_graph=False):
 
         result_data = []
@@ -1143,10 +1139,19 @@ class NeuralNetworkModel(BaseModel):
                            'periods': self.periods,
                            'organisations': self.organisations,
                            'scenarios': self.scenarios,
-                           'x_columns': self.x_columns + self.y_columns,
+                           'x_columns': self.x_columns,
                            'y_columns': self.y_columns}
 
-        indicators_description = self.x_indicators + self.y_indicators
+        output_indicator_short_id = self._data_processor.get_indicator_short_id(output_indicator['type'],
+                                                                                output_indicator['id'])
+
+        output_columns = [col for col in self.y_columns if col.split('_')[1] == output_indicator_short_id]
+
+        input_data = pd.DataFrame(inputs)
+        main_periods = input_data[['period',
+                                   'is_main_period']].loc[input_data['is_main_period'] == True]['period'].unique()
+
+        main_periods = list(main_periods)
 
         for indicator_element in input_indicators:
 
@@ -1156,159 +1161,57 @@ class NeuralNetworkModel(BaseModel):
             if not ind_short_id:
                 raise ProcessorException('Indicator {}, type {}, id {} is not in model indicators')
 
-            input_data = pd.DataFrame(inputs)
+            c_input_data = input_data.copy()
 
-            input_data = self._data_processor.add_short_ids_to_raw_data(input_data)
+            c_input_data['scenario'] = outputs['calculated']['name']
+            c_input_data['periodicity'] = outputs['calculated']['periodicity']
 
-            input_data['current_indicator_short_id'] = ind_short_id
-            input_data['used_indicator_ids'] = None
-            input_data['used_indicator_ids'] = input_data['used_indicator_ids'].apply(lambda x: used_indicator_ids)
+            c_input_data = self._data_processor.add_short_ids_to_raw_data(c_input_data)
 
-            input_data['value'] = input_data[['value_base',
+            c_input_data['current_indicator_short_id'] = ind_short_id
+            c_input_data['used_indicator_ids'] = None
+            c_input_data['used_indicator_ids'] = c_input_data['used_indicator_ids'].apply(lambda x: used_indicator_ids)
+
+            c_input_data['value'] = c_input_data[['value_base',
                                               'value_calculated',
                                               'used_indicator_ids',
                                               'indicator_short_id',
                                               'current_indicator_short_id']].apply(self._get_value_for_fa, axis=1)
 
-            input_data = input_data.drop(['value_base', 'value_calculated', 'used_indicator_ids',
-                                          'current_indicator_short_id'], axis=1)
+            c_input_data = c_input_data.drop(['value_base', 'value_calculated', 'used_indicator_ids',
+                                              'current_indicator_short_id'], axis=1)
 
-            # scenario, periodicity
-            #
-            # x, x_y_pd = self._data_processor.get_x_for_prediction(raw_cur_data, additional_data, encode_fields)
+            # encode_fields = {'organisation': 'organisations', 'year': 'years', 'month': 'months'}
+            encode_fields = None
 
+            x, x_pd = self._data_processor.get_x_for_prediction(c_input_data, additional_data, encode_fields)
+
+            inner_model = self._get_inner_model()
+
+            y = inner_model.predict(x)
+
+            data = x_pd.copy()
+            data[self.y_columns] = y
+
+            output_data = data.loc[data['period'].isin(main_periods)].copy()
+
+            output_data = output_data[output_columns]
+            output_data['value'] = output_data.apply(sum, axis=1)
+
+            output_value = output_data['value'].sum()
+
+            result_element = {'indicator': indicator_element, 'value': output_value}
+
+            result_data.append(result_element)
 
             used_indicator_ids.append(ind_short_id)
 
+        graph_bin = None
+        if get_graph:
+            graph_data = self._get_data_for_fa_graph(result_data, outputs)
+            graph_string = self._get_fa_graph_bin(graph_data)
 
-
-        #
-
-        #
-        # period_columns = list()
-        # for indicator_data in self.x_indicators:
-        #     if indicator_data['period_shift']:
-        #         column_name = 'period_{}{}'.format('m' if indicator_data['period_shift'] < 0 else 'p',
-        #                                            -indicator_data['period_shift'] if indicator_data['period_shift'] < 0
-        #                                            else indicator_data['period_shift'])
-        #
-        #         if column_name not in period_columns:
-        #             period_columns.append(column_name)
-        #
-        # inner_model = self._get_inner_model()
-        #
-        # step = step or 0.3
-        #
-        # output_col_list = list(filter(lambda dt: dt['id'] == output_indicator_id, self.y_indicators))
-        #
-        # if not output_col_list:
-        #     raise ProcessorException('Output indicator id not in model')
-        #
-        # output_column_name = 'ind_' + output_col_list[0]['short_id']
-        #
-        # result = pd.DataFrame()
-        #
-        # multistep = False
-        # if isinstance(step, list) or isinstance(step, tuple):
-        #     steps = step
-        #     if 0 not in steps:
-        #         steps.append(0)
-        #     multistep = True
-        # else:
-        #     steps = [-step, 0, step]
-        #
-        # steps.sort()
-        #
-        # for indicator_data in self.x_indicators:
-        #
-        #     if indicator_data['period_shift']:
-        #         continue
-        #
-        #     cur_data = pd.DataFrame()
-        #
-        #     for step in steps:
-        #
-        #         raw_cur_data = data.copy()
-        #
-        #         if step:
-        #             cur_data_ind = raw_cur_data.loc[raw_cur_data['indicator_short_id']==indicator_data['short_id']].copy()
-        #             cur_data_ind['value'] = cur_data_ind['value']*(1 + step)
-        #             raw_cur_data.loc[raw_cur_data['indicator_short_id'] == indicator_data['short_id']] = cur_data_ind
-        #
-        #         encode_fields = None
-        #         x, x_y_pd = self._data_processor.get_x_for_prediction(raw_cur_data, additional_data, encode_fields)
-        #
-        #         columns_to_drop = self.y_columns + ['organisation', 'scenario', 'period', 'periodicity',
-        #                                             'year'] + period_columns
-        #
-        #         x = x_y_pd.drop(columns_to_drop, axis=1).to_numpy()
-        #
-        #         y = inner_model.predict(x)
-        #
-        #         y_pd = pd.DataFrame(y, columns=self.y_columns)
-        #         y = y_pd[[output_column_name]].to_numpy()
-        #
-        #         x_y_pd[output_column_name] = y
-        #
-        #         input_indicator_columns = list()
-        #         if indicator_data['use_analytics']:
-        #             for col_name in self.x_columns:
-        #
-        #                 if col_name=='month':
-        #                     continue
-        #
-        #                 col_list = col_name.split('_')
-        #                 if col_list[1] == indicator_data['short_id'] and len(col_list) == 4:
-        #                     input_indicator_columns.append(col_name)
-        #         else:
-        #             col_name = 'ind_' + indicator_data['short_id']
-        #             if indicator_data.get('period_number'):
-        #                 col_name += '_p_f{}'.format(indicator_data['period_number'])
-        #             input_indicator_columns.append(col_name)
-        #
-        #         if not len(cur_data):
-        #             cur_data = x_y_pd.copy()
-        #             cur_data['indicator_id'] = indicator_data['id']
-        #             columns_to_drop = ['organisation', 'scenario', 'periodicity', 'year',
-        #                                'month'] + period_columns + self.x_columns + self.y_columns
-        #             cur_data = cur_data.drop(columns_to_drop, axis=1)
-        #
-        #         cur_data['koef'] = step
-        #         cur_data['out_value'] = x_y_pd[output_column_name]
-        #         cur_data['in_value'] = x_y_pd[input_indicator_columns].apply(sum, axis=1)
-        #
-        #         if not len(result):
-        #             result = cur_data.copy()
-        #         else:
-        #             result = pd.concat([result, cur_data], axis=0)
-        #
-        # result_min = result.loc[result['koef'] == steps[0]].groupby('indicator_id', as_index=False).sum()
-        # result_min = result_min.rename({'out_value': 'out_value_min'}, axis=1)
-        # result_min = result_min.drop(['koef', 'in_value'], axis=1)
-        # result_max = result.loc[result['koef'] == steps[-1]].groupby('indicator_id', as_index=False).sum()
-        # result_max = result_max.rename({'out_value': 'out_value_max'}, axis=1)
-        # result_max = result_max.drop(['koef', 'in_value'], axis=1)
-        #
-        # result = result.merge(result_min, on=['indicator_id'], how='left')
-        # result = result.merge(result_max, on=['indicator_id'], how='left')
-        # result['max_delta'] = abs(result['out_value_max'] - result['out_value_min'])
-        #
-        # result = result.sort_values(by='max_delta', ascending=False)
-        #
-        # result = result.drop(['out_value_min'], axis=1)
-        # result = result.drop(['out_value_max'], axis=1)
-        #
-        # graph_bin = None
-        # if get_graph:
-        #     graph_data = self._get_data_for_fa_graph(result, indicators_description, output_indicator_id, steps)
-        #     graph_bin = self._get_fa_graph_bin(graph_data, steps)
-        #
-        # result = result.drop(['max_delta'], axis=1)
-        # output = result.to_dict(orient='records')
-        #
-        # return output, indicators_description, graph_bin
-
-        return None, None, None
+        return result_data, graph_string
 
     def _check_data(self, data, additional_parameters=None):
 
@@ -1513,7 +1416,7 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
 
         return None
 
-    def get_factor_analysis_data_from_model(self, inputs, input_indicators, scenarios, output_indicator_id, get_graph=False):
+    def get_factor_analysis_data_from_model(self, inputs, input_indicators, outputs, output_indicator_id, get_graph=False):
 
         raise ProcessorException('factor analysis is not allowed for periodic neural network')
 
@@ -1788,7 +1691,7 @@ class LinearModel(BaseModel):
     def _check_data(self, data):
         pass
 
-    def get_factor_analysis_data_from_model(self, inputs, input_indicators, scenarios, output_indicator_id, get_graph=False):
+    def get_factor_analysis_data_from_model(self, inputs, input_indicators, outputs, output_indicator_id, get_graph=False):
         return None, None, None
 
 
@@ -2751,17 +2654,10 @@ def get_db_connector(parameters):
 def get_factor_analysis_data(parameters):
 
     processor = ModelProcessor(parameters)
-    fa, indicator_description, graph_bin = processor.get_factor_analysis_data(parameters)
+    fa, graph_data = processor.get_factor_analysis_data(parameters)
 
-    get_graph = parameters.get('get_graph')
-
-    result = dict(status='OK', error_text='', result=fa, indicator_description=indicator_description,
+    result = dict(status='OK', error_text='', result=fa, graph_data=graph_data,
                   description='model factor analysis data recieved')
-
-    get_graph = False
-
-    if get_graph:
-        result['graph_data'] = base64.b64encode(graph_bin).decode(encoding='utf-8')
 
     return result
 
