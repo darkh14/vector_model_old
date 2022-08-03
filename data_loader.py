@@ -425,9 +425,8 @@ class LoadingProcessor:
     def _str_to_date(date_str):
         return datetime.datetime.strptime(date_str, '%d.%m.%Y %H:%M:%S')
 
-    def _get_other_downloads(self, download_filter: Optional[dict]=None) -> dict:
-        result = self._db_connector.read_data('loadings')
-        print(result)
+    def _get_other_downloads(self, download_filter: Optional[dict] = None) -> dict:
+        result = self._db_connector.read_data('loadings', download_filter)
 
         statuses = ['registered', 'in_process']
 
