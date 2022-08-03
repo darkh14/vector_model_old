@@ -6,6 +6,7 @@ import db_connector
 from logger import ProcessorException
 from job_processor import JobProcessor
 import settings_controller
+from typing import Optional
 
 DB_CONNECTORS = []
 
@@ -281,7 +282,7 @@ class LoadingProcessor:
 
     def add_short_ids_to_raw_data(self, raw_data):
 
-        raw_data['indicator_short_id'] = raw_data['indicator'].apply(self._make_short_id_from_dict)
+        raw_data['indicator_short_id'] = raw_data['indicator'].apply(self.make_short_id_from_dict)
         raw_data['analytics'] = raw_data['analytics'].apply(self._add_short_id_to_analytics)
 
         raw_data['analytics_key_id'] = raw_data['analytics'].apply(self._make_short_id_from_list)
@@ -296,7 +297,7 @@ class LoadingProcessor:
 
     def _add_short_id_to_analytics(self, analytics_list):
         for an_el in analytics_list:
-            an_el['short_id'] = self._make_short_id_from_dict(an_el)
+            an_el['short_id'] = self.make_short_id_from_dict(an_el)
         return analytics_list
 
     @staticmethod
@@ -306,7 +307,7 @@ class LoadingProcessor:
         data_hash = hashlib.md5(value.encode())
         return data_hash.hexdigest()[-7:]
 
-    def _make_short_id_from_dict(self, dict_value):
+    def make_short_id_from_dict(self, dict_value):
         str_val = dict_value['id'] + dict_value.get('type') or ''
         return self.get_hash(str_val)
 
@@ -486,6 +487,33 @@ def delete_loading_parameters(parameters):
     loading.delete_loading_parameters()
 
     return {'status': 'OK', 'error_text': '', 'description': 'loading parameters removed'}
+
+
+def get_raw_data_quantity(parameters):
+
+    data_filter = parameters.get('filter')
+
+    db_conn = get_db_connector(parameters)
+
+    if data_filter and 'indicator' in data_filter.keys():
+        id_dict = {'id': data_filter['indicator']['id'], 'type': data_filter['indicator']['type']}
+
+        data_filter['indicator_short_id'] = LoadingProcessor.make_short_id_from_dict(id_dict)
+        data_filter.pop('indicator')
+
+    result = db_conn.get_collection_quantity('raw_data', data_filter)
+
+    return {'status': 'OK', 'error_text': '', 'description': 'data quantity get',
+            'data_quantity': result}
+
+
+def remove_all_raw_data(parameters):
+
+    db_conn = get_db_connector(parameters)
+
+    result = db_conn.drop_collection('raw_data')
+
+    return {'status': 'OK', 'error_text': '', 'description': 'all data removed'}
 
 
 def get_db_connector(parameters=None):

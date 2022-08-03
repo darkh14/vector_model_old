@@ -120,6 +120,8 @@ class Processor:
         result['data_set_package_parameters'] = data_loader.set_package_parameters
         result['data_delete_loading_parameters'] = data_loader.delete_loading_parameters
         result['data_initialize_loading'] = data_loader.initialize_loading
+        result['data_get_raw_data_quantity'] = data_loader.get_raw_data_quantity
+        result['data_remove_all_raw_data'] = data_loader.remove_all_raw_data
         result['model_get_parameters'] = model_processor.get_model_parameters
         result['model_initialize'] = model_processor.initialize_model
         result['model_update'] = model_processor.update_model

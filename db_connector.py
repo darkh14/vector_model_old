@@ -386,6 +386,16 @@ class Connector:
         collection = self.get_collection(collection_name)
         collection.drop()
 
+    def get_collection_quantity(self, collection_name, collection_filter=None):
+        collection = self.get_collection(collection_name)
+
+        if not collection_filter:
+            collection_filter = dict()
+
+        result = collection.count_documents(collection_filter)
+
+        return result
+
     @staticmethod
     def _numpy_to_list_of_dicts(np_array):
         if not len(np_array.shape) == 2:
