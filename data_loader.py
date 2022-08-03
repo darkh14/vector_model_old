@@ -427,6 +427,7 @@ class LoadingProcessor:
 
     def _get_other_downloads(self, download_filter: Optional[dict]=None) -> dict:
         result = self._db_connector.read_data('loadings')
+        print(result)
 
         statuses = ['registered', 'in_process']
 
