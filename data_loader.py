@@ -37,6 +37,20 @@ class LoadingProcessor:
         if not self._new_loading:
             raise ProcessorException('Loading is already initialized!')
 
+        other_downloadings = self._get_other_downloads()
+
+        if other_downloadings:
+            ids = [el['id'] for el in other_downloadings]
+            one_downloading = len(ids) == 1
+            error_text = 'Initializing of loading is not allowed. There are other downloadings which are not finished. '
+            error_text += 'Ids are ' + ', '.join(ids)
+            if one_downloading:
+                error_text = error_text.replace('are', 'is')
+                error_text = error_text.replace('Ids', 'Id')
+                error_text = error_text.replace('downloadings', 'downloading')
+
+            raise ProcessorException(error_text)
+
         self._initialize_loading_in_db(loading, packages)
         self._new_loading = False
 
@@ -410,6 +424,15 @@ class LoadingProcessor:
     @staticmethod
     def _str_to_date(date_str):
         return datetime.datetime.strptime(date_str, '%d.%m.%Y %H:%M:%S')
+
+    def _get_other_downloads(self, download_filter: Optional[dict]=None) -> dict:
+        result = self._db_connector.read_data('loadings')
+
+        statuses = ['registered', 'in_process']
+
+        result = [el for el in result if el['status'] in statuses and el['id'] != self.loading_id]
+
+        return result
 
 
 def initialize_loading(parameters):

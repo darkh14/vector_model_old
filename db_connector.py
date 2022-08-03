@@ -363,10 +363,13 @@ class Connector:
         collection = self.get_collection(collection_name)
         return collection.find_one(line_filter)
 
-    def _read_data(self, collection_name):
+    def read_data(self, collection_name, data_filter=None):
 
         collection = self.get_collection(collection_name)
-        return list(collection.find())
+
+        result = collection.find(data_filter)
+
+        return list(result)
 
     def _get_collection_names(self):
 
