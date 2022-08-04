@@ -56,7 +56,7 @@ class Connector:
             print('---Inserting new data - finished--')
         else:
             print('---Updating data--')
-            selections = ['period', 'scenario', 'organisation', 'indicator_short_id', 'indicator_short_id']
+            selections = ['period', 'scenario', 'organisation', 'indicator_short_id', 'analytics_key_id']
             line_num = 1
             for line in raw_data:
                 line_filter = {selection: line[selection] for selection in selections}
