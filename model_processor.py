@@ -105,7 +105,7 @@ class ModelProcessor:
 
         self.model = self._get_model(model_description)
 
-        self.model.drop_fitting()
+        self.model.drop_fitting(parameters.get('sleep_before'))
 
     def predict(self, parameters):
 
