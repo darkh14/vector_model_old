@@ -495,7 +495,10 @@ class BaseModel:
 
             raise ex
 
-    def drop_fitting(self):
+    def drop_fitting(self, sleep_before=0):
+
+        if sleep_before:
+            time.sleep(sleep_before)
 
         if not self.initialized:
             raise ProcessorException('Model is not initialized')
