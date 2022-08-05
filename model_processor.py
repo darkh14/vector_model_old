@@ -438,15 +438,12 @@ class BaseModel:
 
             job_id = job_id or ''
 
-            current_pid = os.getpid()
-
             self.is_fit = False
             self.fitting_is_started = True
             self.fitting_is_error = False
             self.fitting_date = None
             self.fitting_start_date = datetime.datetime.now()
             self.fitting_job_id = job_id
-            self.fitting_job_pid = current_pid
 
             self.feature_importances_is_calculated = False
             self.fi_calculation_is_started = False
@@ -463,7 +460,8 @@ class BaseModel:
                                                    self.feature_importances_is_calculated)
             self._data_processor.write_model_field(self.model_id, 'fi_calculation_is_started',
                                                    self.fi_calculation_is_started)
-
+            current_pid = os.getpid()
+            self.fitting_job_pid = current_pid
             self._data_processor.write_model_field(self.model_id, 'fitting_job_pid', self.fitting_job_pid)
 
             self.fit_model(epochs=epochs, validation_split=validation_split, retrofit=retrofit, date_from=date_from)
