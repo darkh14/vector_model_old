@@ -126,6 +126,7 @@ class Processor:
         result['model_initialize'] = model_processor.initialize_model
         result['model_update'] = model_processor.update_model
         result['model_drop'] = model_processor.drop_model
+        result['model_drop_fitting'] = model_processor.drop_fitting
 
         return result
 

@@ -49,24 +49,27 @@ class JobProcessor:
                     'result': None,
                     'parameters': parameters,
                     'output': '',
-                    'error': ''}
-
-        db_connector = JobProcessor.get_db_connector(parameters)
-
-        db_connector.write_job(new_line)
+                    'error': '',
+                    'pid': 0}
 
         python_command, python_path = cls._get_path_command()
 
+        db_connector = JobProcessor.get_db_connector(parameters)
+
         with open(out_file_name, "w") as f_out:
             with open(err_file_name, "w") as f_err:
-                p = subprocess.Popen([python_command,
+                job_process = subprocess.Popen([python_command,
                                        python_path,
                                        '-background_job',
                                        new_job_id,
                                        '.'.join([module_name, function_name]),
                                        db_connector.db_id], stdout=f_out, stderr=f_err)
 
-        return {'status': 'OK', 'error_text': '',
+        new_line['pid'] = job_process.pid
+
+        db_connector.write_job(new_line)
+
+        return {'status': 'OK', 'error_text': '', 'pid': job_process.pid,
                 'description': 'background job "{}" is started'.format('.'.join([module_name, function_name]))}
 
     @classmethod

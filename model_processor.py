@@ -1,3 +1,5 @@
+import time
+
 import settings_controller
 from logger import ProcessorException as ProcessorException
 import db_connector
@@ -5,6 +7,7 @@ import db_connector
 import numpy as np
 import pandas as pd
 import os
+import psutil
 import math
 from abc import ABCMeta, abstractmethod
 import json
@@ -69,7 +72,10 @@ class ModelProcessor:
         self.model = self._get_model(model_description)
 
         drop_started_fitting = parameters.get('drop_started_fitting')
-        self.model.update_model(model_description, drop_started_fitting=drop_started_fitting)
+        drop_undefined_parameters = parameters.get('drop_undefined_parameters')
+
+        self.model.update_model(model_description, drop_started_fitting=drop_started_fitting,
+                                drop_undefined_parameters=drop_undefined_parameters)
 
     def fit(self, parameters):
         model_description = parameters.get('model')
@@ -90,6 +96,16 @@ class ModelProcessor:
                                  date_from=date_from, job_id=job_id)
 
         return history
+
+    def drop_fitting(self, parameters):
+        model_description = parameters.get('model')
+
+        if not model_description:
+            raise ProcessorException('model is not in parameters')
+
+        self.model = self._get_model(model_description)
+
+        self.model.drop_fitting()
 
     def predict(self, parameters):
 
@@ -270,16 +286,20 @@ class BaseModel:
         self.fi_calculation_is_started = False
         self.fitting_date = None
         self.fitting_is_started = False
+        self.fitting_is_error = False
         self.fitting_start_date = None
         self.fitting_job_id = ''
         self.feature_importances = None
+        self.fitting_job_pid = 0
 
-        self._field_to_update = ['name', 'type', 'initialized', 'is_fit', 'fitting_is_started', 'fitting_start_date',
+        self._field_to_update = ['name', 'type', 'initialized', 'is_fit', 'fitting_is_started', 'fitting_is_error'
+                                 'fitting_start_date',
                                  'fitting_date', 'rsme', 'mspe', 'feature_importances_is_calculated',
                                  'fitting_is_started',
                                  'filter', 'x_indicators', 'y_indicators', 'periods', 'organisations',
                                  'scenarios', 'x_columns', 'y_columns', 'x_analytics', 'y_analytics',
-                                 'x_analytic_keys', 'y_analytic_keys', 'feature_importances', 'fitting_job_id']
+                                 'x_analytic_keys', 'y_analytic_keys', 'feature_importances', 'fitting_job_id',
+                                 'fitting_job_pid']
 
         description_from_db = self._data_processor.read_model_description_from_db(self.model_id)
 
@@ -297,12 +317,14 @@ class BaseModel:
             self.fi_calculation_is_started = False
             self.fitting_date = None
             self.fitting_is_started = False
+            self.fitting_is_error = False
             self.fitting_start_date = None
             self.fitting_job_id = ''
             self.initialized = False
             self.rsme = 0
             self.mspe=0
             self.feature_importances = None
+            self.fitting_job_pid = 0
 
         if x_indicators:
             self.x_indicators = self._data_processor.get_indicators_data_from_parameters(x_indicators)
@@ -337,7 +359,7 @@ class BaseModel:
 
         self._data_processor.write_model_to_db(self.model_id, model_description)
 
-    def update_model(self, model_parameters=None, drop_started_fitting=False):
+    def update_model(self, model_parameters=None, drop_started_fitting=False, drop_undefined_parameters=False):
 
         if not self.initialized:
             raise ProcessorException('Model is not initialized')
@@ -345,29 +367,32 @@ class BaseModel:
         if self.fitting_is_started and not drop_started_fitting:
             raise ProcessorException('Fitting is started, model can not be updated. If you ')
 
-        self.periods = []
-        self.organisations = []
-        self.scenarios = []
+        if drop_undefined_parameters:
+            self.periods = []
+            self.organisations = []
+            self.scenarios = []
 
-        self.x_columns = []
-        self.y_columns = []
+            self.x_columns = []
+            self.y_columns = []
 
-        self.x_analytics = []
-        self.y_analytics = []
+            self.x_analytics = []
+            self.y_analytics = []
 
-        self.x_analytic_keys = []
-        self.y_analytic_keys = []
+            self.x_analytic_keys = []
+            self.y_analytic_keys = []
 
-        self.is_fit = False
-        self.fitting_is_started = False
+            self.is_fit = False
+            self.fitting_is_started = False
+            self.fitting_is_error = False
 
-        self.feature_importances_is_calculated = False
-        self.fi_calculation_is_started = False
+            self.feature_importances_is_calculated = False
+            self.fi_calculation_is_started = False
 
-        self.fitting_start_date = None
-        self.fitting_date = None
+            self.fitting_start_date = None
+            self.fitting_date = None
 
-        self.fitting_job_id = ''
+            self.fitting_job_id = ''
+            self.fitting_job_pid = 0
 
         if model_parameters:
             x_indicators = model_parameters.get('x_indicators')
@@ -401,47 +426,108 @@ class BaseModel:
 
     def fit(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None, job_id=''):
 
+        try:
+
+            if not self.initialized:
+                raise ProcessorException('Model is not initialized')
+
+            if self.fitting_is_started:
+                raise ProcessorException('Fitting is always started')
+
+            print('job_id:  {}'.format(job_id))
+
+            job_id = job_id or ''
+
+            current_pid = os.getpid()
+
+            self.is_fit = False
+            self.fitting_is_started = True
+            self.fitting_is_error = False
+            self.fitting_date = None
+            self.fitting_start_date = datetime.datetime.now()
+            self.fitting_job_id = job_id
+            self.fitting_job_pid = current_pid
+
+            self.feature_importances_is_calculated = False
+            self.fi_calculation_is_started = False
+
+            self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
+            self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
+            self._data_processor.write_model_field(self.model_id, 'fitting_is_error', self.fitting_is_error)
+            self._data_processor.write_model_field(self.model_id, 'fitting_date', self.fitting_date)
+            self._data_processor.write_model_field(self.model_id, 'fitting_start_date', self.fitting_start_date)
+
+            self._data_processor.write_model_field(self.model_id, 'fitting_job_id', self.fitting_job_id)
+
+            self._data_processor.write_model_field(self.model_id, 'feature_importances_is_calculated',
+                                                   self.feature_importances_is_calculated)
+            self._data_processor.write_model_field(self.model_id, 'fi_calculation_is_started',
+                                                   self.fi_calculation_is_started)
+
+            self._data_processor.write_model_field(self.model_id, 'fitting_job_pid', self.fitting_job_pid)
+
+            self.fit_model(epochs=epochs, validation_split=validation_split, retrofit=retrofit, date_from=date_from)
+
+            self.initialized = self._data_processor.read_model_field(self.model_id, 'initialized')
+
+            self.is_fit = True
+            self.fitting_date = datetime.datetime.now()
+            self.fitting_is_started = False
+            self.fitting_start_date = None
+            self.fitting_job_pid = 0
+            self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
+            self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
+            self._data_processor.write_model_field(self.model_id, 'fitting_date', self.fitting_date)
+            self._data_processor.write_model_field(self.model_id, 'fitting_start_date', self.fitting_start_date)
+            self._data_processor.write_model_field(self.model_id, 'fitting_job_pid', self.fitting_job_pid)
+
+        except Exception as ex:
+
+            self.is_fit = False
+            self.fitting_is_started = False
+            self.fitting_is_error = True
+            self.fitting_job_pid = 0
+
+            self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
+            self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
+            self._data_processor.write_model_field(self.model_id, 'fitting_is_error', self.fitting_is_error)
+            self._data_processor.write_model_field(self.model_id, 'fitting_job_pid', self.fitting_job_pid)
+
+            raise ex
+
+    def drop_fitting(self):
+
         if not self.initialized:
             raise ProcessorException('Model is not initialized')
 
-        if self.fitting_is_started:
-            raise ProcessorException('Fitting is always started')
+        if not self.fitting_is_started and not self.is_fit:
+            raise ProcessorException('Wrong model status. Model must be fitted or fitting must be started for dropping')
 
-        print('job_id:  {}'.format(job_id))
+        if self.fitting_is_started and self.fitting_job_pid:
 
-        job_id = job_id or ''
+            try:
+                process = psutil.Process(self.fitting_job_pid)
+                process.terminate()
+            except psutil.NoSuchProcess:
+                print('No such process pid {}'.format(self.fitting_job_pid))
+            except psutil.Error as error:
+                print('Process termination error. {}'.format(str(error)))
+
+            if self.fitting_job_id:
+                job_line = self._data_processor.get_job(self.fitting_job_id)
+                job_line['status'] = 'interrupted'
+                self._data_processor.set_job(job_line)
 
         self.is_fit = False
-        self.fitting_is_started = True
-        self.fitting_date = None
-        self.fitting_start_date = datetime.datetime.now()
-        self.fitting_job_id = job_id
-
-        self.feature_importances_is_calculated = False
-        self.fi_calculation_is_started = False
-
-        self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
-        self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
-        self._data_processor.write_model_field(self.model_id, 'fitting_date', self.fitting_date)
-        self._data_processor.write_model_field(self.model_id, 'fitting_start_date', self.fitting_start_date)
-
-        self._data_processor.write_model_field(self.model_id, 'fitting_job_id', self.fitting_job_id)
-
-        self._data_processor.write_model_field(self.model_id, 'feature_importances_is_calculated',
-                                               self.feature_importances_is_calculated)
-        self._data_processor.write_model_field(self.model_id, 'fi_calculation_is_started',
-                                               self.fi_calculation_is_started)
-
-        self.fit_model(epochs=epochs, validation_split=validation_split, retrofit=retrofit, date_from=date_from)
-
-        self.is_fit = True
-        self.fitting_date = datetime.datetime.now()
         self.fitting_is_started = False
-        self.fitting_start_date = None
-        self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
+        self.fitting_is_error = False
+        self.fitting_job_pid = 0
+
         self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
-        self._data_processor.write_model_field(self.model_id, 'fitting_date', self.fitting_date)
-        self._data_processor.write_model_field(self.model_id, 'fitting_start_date', self.fitting_start_date)
+        self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
+        self._data_processor.write_model_field(self.model_id, 'fitting_is_error', self.fitting_is_error)
+        self._data_processor.write_model_field(self.model_id, 'fitting_job_pid', self.fitting_job_pid)
+
 
     @abstractmethod
     def fit_model(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
@@ -535,6 +621,7 @@ class BaseModel:
 
             is_fit = self._data_processor.read_model_field(self.model_id, 'is_fit')
             fitting_is_started = self._data_processor.read_model_field(self.model_id, 'fitting_is_started')
+            fitting_is_error = self._data_processor.read_model_field(self.model_id, 'fitting_is_error')
             fitting_date = self._data_processor.read_model_field(self.model_id, 'fitting_date')
 
             if fitting_date:
@@ -559,6 +646,7 @@ class BaseModel:
 
             is_fit = False
             fitting_is_started = False
+            fitting_is_error = False
             fitting_date = None
 
             fitting_start_date = None
@@ -571,7 +659,9 @@ class BaseModel:
 
         model_parameters = {'initialized': initialized, 'rsme': rsme, 'mspe': mspe, 'is_fit': is_fit,
                             'fitting_date': fitting_date,
-                            'fitting_is_started': fitting_is_started, 'fitting_start_date': fitting_start_date,
+                            'fitting_is_started': fitting_is_started,
+                            'fitting_is_error': fitting_is_error,
+                            'fitting_start_date': fitting_start_date,
                             'feature_importances': feature_importances,
                             'feature_importances_is_calculated': feature_importances_is_calculated,
                             'fi_calculation_is_started': fi_calculation_is_started,
@@ -1003,6 +1093,10 @@ class NeuralNetworkModel(BaseModel):
         indicator_filter = [ind_data['short_id'] for ind_data in self.x_indicators + self.y_indicators]
 
         data = self._data_processor.read_raw_data(indicator_filter, date_from=date_from, ad_filter=self.filter)
+
+        if not data:
+            raise ProcessorException('There are no data for fitting. Check indicators, analytics and other '
+                                     'parameters of fitting. Also check loading data')
         if not retrofit:
             self.update_model_while_fitting(data)
 
@@ -1773,6 +1867,12 @@ class DataProcessor:
     def read_raw_data(self, indicators=None, date_from=None, ad_filter=None):
         raw_data = self._db_connector.read_raw_data(indicators, date_from, ad_filter)
         return raw_data
+
+    def get_job(self, job_id):
+        return self._db_connector.read_job(job_id)
+
+    def set_job(self, job_line):
+        return self._db_connector.write_job(job_line)
 
     def delete_model(self, model_id):
         self._db_connector.delete_model(model_id)
@@ -2557,6 +2657,15 @@ def fit(parameters):
     history = processor.fit(parameters)
     return {'status': 'OK', 'error_text': '', 'description': 'model fitted', 'history': history}
 
+
+def drop_fitting(parameters):
+
+    processor = ModelProcessor(parameters)
+    processor.drop_fitting(parameters)
+
+    result = dict(status='OK', error_text='', description='fitting is dropped')
+
+    return result
 
 def predict(parameters):
 
