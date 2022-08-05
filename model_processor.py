@@ -531,7 +531,6 @@ class BaseModel:
         self._data_processor.write_model_field(self.model_id, 'fitting_is_error', self.fitting_is_error)
         self._data_processor.write_model_field(self.model_id, 'fitting_job_pid', self.fitting_job_pid)
 
-
     @abstractmethod
     def fit_model(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
         """method for fitting model"""
