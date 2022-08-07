@@ -139,10 +139,22 @@ class ModelProcessor:
 
         self.model = self._get_model(model_description)
 
+        job_id = parameters.get('job_id') or ''
+
         result = self.model.calculate_feature_importances(date_from=parameters.get('date_from'),
-                                                          epochs=parameters.get('epochs'))
+                                                          epochs=parameters.get('epochs'), job_id=job_id)
 
         return result
+
+    def drop_fi_calculation(self, parameters):
+        model_description = parameters.get('model')
+
+        if not model_description:
+            raise ProcessorException('model is not in parameters')
+
+        self.model = self._get_model(model_description)
+
+        self.model.drop_fi_calculation(parameters.get('sleep_before'))
 
     def get_feature_importances(self, parameters):
 
@@ -274,6 +286,25 @@ class BaseModel:
         self.model_id = model_id
         self.db_id = ''
 
+        self.name = name
+        self.filter = []
+
+        self.organisations = []
+        self.scenarios = []
+        self.periods = []
+
+        self.x_indicators = []
+        self.y_indicators = []
+
+        self.x_columns = []
+        self.y_columns = []
+
+        self.x_analytics = []
+        self.y_analytics = []
+
+        self.x_analytic_keys = []
+        self.y_analytic_keys = []
+
         self._db_connector = database_connector
 
         print('Database {}, id:{}'.format(self._db_connector.db_name, self._db_connector.db_id))
@@ -282,23 +313,34 @@ class BaseModel:
 
         self.initialized = False
         self.is_fit = False
-        self.feature_importances_is_calculated = False
-        self.fi_calculation_is_started = False
+
         self.fitting_date = None
         self.fitting_is_started = False
         self.fitting_is_error = False
         self.fitting_start_date = None
         self.fitting_job_id = ''
-        self.feature_importances = None
         self.fitting_job_pid = 0
 
-        self._field_to_update = ['name', 'type', 'initialized', 'is_fit', 'fitting_is_started', 'fitting_is_error'
+        self.feature_importances = None
+        self.feature_importances_is_calculated = False
+        self.fi_calculation_is_started = False
+        self.fi_calculation_is_error = False
+        self.fi_calculation_job_id = ''
+        self.fi_calculation_job_pid = 0
+
+        self.rsme = 0
+        self.mspe = 0
+
+        self._field_to_update = ['name', 'type', 'initialized', 'is_fit', 'fitting_is_started', 'fitting_is_error',
                                  'fitting_start_date',
-                                 'fitting_date', 'rsme', 'mspe', 'feature_importances_is_calculated',
+                                 'fitting_date', 'rsme', 'mspe',
+                                 'feature_importances_is_calculated', 'fi_calculation_is_started',
+                                 'fi_calculation_is_error', 'fi_calculation_job_id', 'fi_calculation_job_pid',
                                  'fitting_is_started',
                                  'filter', 'x_indicators', 'y_indicators', 'periods', 'organisations',
                                  'scenarios', 'x_columns', 'y_columns', 'x_analytics', 'y_analytics',
-                                 'x_analytic_keys', 'y_analytic_keys', 'feature_importances', 'fitting_job_id',
+                                 'x_analytic_keys', 'y_analytic_keys', 'feature_importances',
+                                 'fitting_job_id',
                                  'fitting_job_pid']
 
         description_from_db = self._data_processor.read_model_description_from_db(self.model_id)
@@ -306,25 +348,6 @@ class BaseModel:
         if description_from_db:
             for field in self._field_to_update:
                 setattr(self, field, description_from_db.get(field))
-        else:
-            for field in self._field_to_update:
-                setattr(self, field, [])
-            self.name = name
-            self.filter = model_filter
-
-            self.is_fit = False
-            self.feature_importances_is_calculated = False
-            self.fi_calculation_is_started = False
-            self.fitting_date = None
-            self.fitting_is_started = False
-            self.fitting_is_error = False
-            self.fitting_start_date = None
-            self.fitting_job_id = ''
-            self.initialized = False
-            self.rsme = 0
-            self.mspe=0
-            self.feature_importances = None
-            self.fitting_job_pid = 0
 
         if x_indicators:
             self.x_indicators = self._data_processor.get_indicators_data_from_parameters(x_indicators)
@@ -355,9 +378,7 @@ class BaseModel:
 
         self.feature_importances = None
 
-        model_description = {field: getattr(self, field) for field in self._field_to_update}
-
-        self._data_processor.write_model_to_db(self.model_id, model_description)
+        self._write_model_to_db()
 
     def update_model(self, model_parameters=None, drop_started_fitting=False, drop_undefined_parameters=False):
 
@@ -368,31 +389,9 @@ class BaseModel:
             raise ProcessorException('Fitting is started, model can not be updated. If you ')
 
         if drop_undefined_parameters:
-            self.periods = []
-            self.organisations = []
-            self.scenarios = []
-
-            self.x_columns = []
-            self.y_columns = []
-
-            self.x_analytics = []
-            self.y_analytics = []
-
-            self.x_analytic_keys = []
-            self.y_analytic_keys = []
-
-            self.is_fit = False
-            self.fitting_is_started = False
-            self.fitting_is_error = False
-
-            self.feature_importances_is_calculated = False
-            self.fi_calculation_is_started = False
-
-            self.fitting_start_date = None
-            self.fitting_date = None
-
-            self.fitting_job_id = ''
-            self.fitting_job_pid = 0
+            model_description = self._get_default_model_values()
+            for key, value in model_description.items():
+                setattr(self, key, value)
 
         if model_parameters:
             x_indicators = model_parameters.get('x_indicators')
@@ -438,58 +437,51 @@ class BaseModel:
 
             job_id = job_id or ''
 
-            self.is_fit = False
-            self.fitting_is_started = True
-            self.fitting_is_error = False
-            self.fitting_date = None
-            self.fitting_start_date = datetime.datetime.now()
-            self.fitting_job_id = job_id
+            model_description = {'is_fit': False,
+                                 'fitting_is_started': True,
+                                 'fitting_is_error': False,
+                                 'fitting_date': None,
+                                 'fitting_start_date': datetime.datetime.now(),
+                                 'fitting_job_id': job_id,
+                                 'feature_importances_is_calculated': False,
+                                 'fi_calculation_is_started': False,
+                                 'fi_calculation_is_error': False,
+                                 'fi_calculation_job_id': '',
+                                 'fi_calculation_job_pid': 0}
 
-            self.feature_importances_is_calculated = False
-            self.fi_calculation_is_started = False
+            self._set_model_fields_and_write_to_db(model_description)
 
-            self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
-            self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
-            self._data_processor.write_model_field(self.model_id, 'fitting_is_error', self.fitting_is_error)
-            self._data_processor.write_model_field(self.model_id, 'fitting_date', self.fitting_date)
-            self._data_processor.write_model_field(self.model_id, 'fitting_start_date', self.fitting_start_date)
-
-            self._data_processor.write_model_field(self.model_id, 'fitting_job_id', self.fitting_job_id)
-
-            self._data_processor.write_model_field(self.model_id, 'feature_importances_is_calculated',
-                                                   self.feature_importances_is_calculated)
-            self._data_processor.write_model_field(self.model_id, 'fi_calculation_is_started',
-                                                   self.fi_calculation_is_started)
             current_pid = os.getpid()
             self.fitting_job_pid = current_pid
             self._data_processor.write_model_field(self.model_id, 'fitting_job_pid', self.fitting_job_pid)
 
             self.fit_model(epochs=epochs, validation_split=validation_split, retrofit=retrofit, date_from=date_from)
 
-            self.initialized = self._data_processor.read_model_field(self.model_id, 'initialized')
+            model_description = {'is_fit': True,
+                                 'fitting_is_started': False,
+                                 'fitting_is_error': False,
+                                 'fitting_date': datetime.datetime.now(),
+                                 'fitting_start_date': None,
+                                 'fitting_job_pid': 0}
 
-            self.is_fit = True
-            self.fitting_date = datetime.datetime.now()
-            self.fitting_is_started = False
-            self.fitting_start_date = None
-            self.fitting_job_pid = 0
-            self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
-            self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
-            self._data_processor.write_model_field(self.model_id, 'fitting_date', self.fitting_date)
-            self._data_processor.write_model_field(self.model_id, 'fitting_start_date', self.fitting_start_date)
-            self._data_processor.write_model_field(self.model_id, 'fitting_job_pid', self.fitting_job_pid)
+            self._set_model_fields_and_write_to_db(model_description)
 
         except Exception as ex:
 
-            self.is_fit = False
-            self.fitting_is_started = False
-            self.fitting_is_error = True
-            self.fitting_job_pid = 0
+            model_description = {'is_fit': False,
+                                 'fitting_is_started': False,
+                                 'fitting_is_error': False,
+                                 'fitting_date': None,
+                                 'fitting_start_date': datetime.datetime.now(),
+                                 'fitting_job_id': '',
+                                 'fitting_job_pid': 0,
+                                 'feature_importances_is_calculated': False,
+                                 'fi_calculation_is_started': False,
+                                 'fi_calculation_is_error': False,
+                                 'fi_calculation_job_id': '',
+                                 'fi_calculation_job_pid': 0}
 
-            self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
-            self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
-            self._data_processor.write_model_field(self.model_id, 'fitting_is_error', self.fitting_is_error)
-            self._data_processor.write_model_field(self.model_id, 'fitting_job_pid', self.fitting_job_pid)
+            self._set_model_fields_and_write_to_db(model_description)
 
             raise ex
 
@@ -519,15 +511,53 @@ class BaseModel:
                 job_line['status'] = 'interrupted'
                 self._data_processor.set_job(job_line)
 
-        self.is_fit = False
-        self.fitting_is_started = False
-        self.fitting_is_error = False
-        self.fitting_job_pid = 0
+        model_description = {'is_fit': False,
+                             'fitting_is_started': False,
+                             'fitting_is_error': False,
+                             'fitting_date': None,
+                             'fitting_start_date': datetime.datetime.now(),
+                             'fitting_job_id': '',
+                             'fitting_job_pid': 0}
 
-        self._data_processor.write_model_field(self.model_id, 'is_fit', self.is_fit)
-        self._data_processor.write_model_field(self.model_id, 'fitting_is_started', self.fitting_is_started)
-        self._data_processor.write_model_field(self.model_id, 'fitting_is_error', self.fitting_is_error)
-        self._data_processor.write_model_field(self.model_id, 'fitting_job_pid', self.fitting_job_pid)
+        self._set_model_fields_and_write_to_db(model_description)
+
+    def drop_fi_calculation(self, sleep_before=0):
+
+        if sleep_before:
+            time.sleep(sleep_before)
+
+        if not self.initialized:
+            raise ProcessorException('Model is not initialized')
+
+        if not self.is_fit:
+            raise ProcessorException('Model is not fit')
+
+        if not self.fi_calculation_is_started and not self.feature_importances_is_calculated:
+            raise ProcessorException('Wrong model status. Model feature importances must be calculated'
+                                     ' or feature importances calculation must be started for dropping')
+
+        if self.fi_calculation_is_started and self.fi_calculation_job_pid:
+
+            try:
+                process = psutil.Process(self.fi_calculation_job_pid)
+                process.terminate()
+            except psutil.NoSuchProcess:
+                print('No such process pid {}'.format(self.fi_calculation_job_pid))
+            except psutil.Error as error:
+                print('Process termination error. {}'.format(str(error)))
+
+            if self.fi_calculation_job_id:
+                job_line = self._data_processor.get_job(self.fi_calculation_job_id)
+                job_line['status'] = 'interrupted'
+                self._data_processor.set_job(job_line)
+
+        model_description = {'feature_importances_is_calculated': False,
+                             'fi_calculation_is_started': False,
+                             'fi_calculation_is_error': False,
+                             'fi_calculation_job_id': '',
+                             'fi_calculation_job_pid': 0}
+
+        self._set_model_fields_and_write_to_db(model_description)
 
     @abstractmethod
     def fit_model(self, epochs=100, validation_split=0.2, retrofit=False, date_from=None):
@@ -537,33 +567,51 @@ class BaseModel:
     def predict(self, inputs, get_graph=False, graph_data=None, additional_parameters=None):
         """method for predicting data from model"""
 
-    def calculate_feature_importances(self, date_from=None, epochs=1000, retrofit=False, validation_split=0.2):
+    def calculate_feature_importances(self, date_from=None, epochs=1000, retrofit=False, validation_split=0.2, job_id=''):
 
-        if not self.initialized:
-            raise ProcessorException('Error of calculating feature importances. Model is not initialized')
+        result = {}
+        try:
+            if not self.initialized:
+                raise ProcessorException('Error of calculating feature importances. Model is not initialized')
 
-        if not self.is_fit:
-            raise ProcessorException('Error of calculating feature importances. Model is not fit. '
-                                     'Train the model before calculating')
+            if not self.is_fit:
+                raise ProcessorException('Error of calculating feature importances. Model is not fit. '
+                                         'Train the model before calculating')
+            job_id = job_id or ''
+            model_description = {'feature_importances_is_calculated': False,
+                                 'fi_calculation_is_started': True,
+                                 'fi_calculation_is_error': False,
+                                 'fi_calculation_job_id': job_id,
+                                 'fi_calculation_job_pid': 0}
 
-        self.fi_calculation_is_started = True
-        self.feature_importances_is_calculated = False
+            self._set_model_fields_and_write_to_db(model_description)
 
-        self._data_processor.write_model_field(self.model_id, 'fi_calculation_is_started',
-                                               self.fi_calculation_is_started)
-        self._data_processor.write_model_field(self.model_id, 'feature_importances_is_calculated',
-                                               self.feature_importances_is_calculated)
+            current_pid = os.getpid()
+            self.fi_calculation_job_pid = current_pid
+            self._data_processor.write_model_field(self.model_id, 'fi_calculation_job_pid', self.fi_calculation_job_pid)
 
-        result = self.calculate_fi_after_check(date_from=date_from, epochs=epochs, retrofit=retrofit,
-                                               validation_split=validation_split)
+            result = self.calculate_fi_after_check(date_from=date_from, epochs=epochs, retrofit=retrofit,
+                                                   validation_split=validation_split)
 
-        self.feature_importances_is_calculated = True
-        self.fi_calculation_is_started = False
+            model_description = {'feature_importances_is_calculated': True,
+                                 'fi_calculation_is_started': False,
+                                 'fi_calculation_is_error': False,
+                                 'fi_calculation_job_id': '',
+                                 'fi_calculation_job_pid': 0}
 
-        self._data_processor.write_model_field(self.model_id, 'fi_calculation_is_started',
-                                               self.fi_calculation_is_started)
-        self._data_processor.write_model_field(self.model_id, 'feature_importances_is_calculated',
-                                               self.feature_importances_is_calculated)
+            self._set_model_fields_and_write_to_db(model_description)
+
+        except Exception as ex:
+
+            model_description = {'feature_importances_is_calculated': False,
+                                 'fi_calculation_is_started': False,
+                                 'fi_calculation_is_error': False,
+                                 'fi_calculation_job_id': '',
+                                 'fi_calculation_job_pid': 0}
+
+            self._set_model_fields_and_write_to_db(model_description)
+
+            raise ex
 
         return result
 
@@ -635,8 +683,13 @@ class BaseModel:
 
             feature_importances_is_calculated = bool(self._data_processor.read_model_field(self.model_id,
                                                                                    'feature_importances_is_calculated'))
+
             fi_calculation_is_started = bool(self._data_processor.read_model_field(self.model_id,
                                                                                    'fi_calculation_is_started'))
+
+            fi_calculation_is_error = bool(self._data_processor.read_model_field(self.model_id,
+                                                                                 'fi_calculation_is_error'))
+            fi_calculation_job_id = bool(self._data_processor.read_model_field(self.model_id, 'fi_calculation_job_id'))
 
         else:
             rsme = 0
@@ -648,13 +701,15 @@ class BaseModel:
             fitting_is_started = False
             fitting_is_error = False
             fitting_date = None
-
             fitting_start_date = None
+            fitting_job_id = ''
 
             feature_importances_is_calculated = False
             fi_calculation_is_started = False
 
-            fitting_job_id = ''
+            fi_calculation_is_error = False
+            fi_calculation_job_id = ''
+
 
 
         model_parameters = {'initialized': initialized, 'rsme': rsme, 'mspe': mspe, 'is_fit': is_fit,
@@ -665,6 +720,8 @@ class BaseModel:
                             'feature_importances': feature_importances,
                             'feature_importances_is_calculated': feature_importances_is_calculated,
                             'fi_calculation_is_started': fi_calculation_is_started,
+                            'fi_calculation_is_error': fi_calculation_is_error,
+                            'fi_calculation_job_id': fi_calculation_job_id,
                             'fitting_job_id': fitting_job_id}
 
         return model_parameters
@@ -968,6 +1025,59 @@ class BaseModel:
         graph_str = fig.to_html()
 
         return graph_str
+
+    def _write_model_to_db(self, model_fields=None):
+
+        if not model_fields:
+            model_fields = self._field_to_update
+
+        model_description = {el: getattr(self, el) for el in model_fields}
+
+        self._data_processor.write_model_to_db(self.model_id, model_description)
+
+    def _set_model_fields_and_write_to_db(self, model_description: dict):
+        self._set_model_fields(model_description)
+        self._write_model_to_db(model_fields=model_description.keys())
+
+    def _set_model_fields(self, model_description: dict):
+        for key, value in model_description.items():
+            setattr(self, key, value)
+
+    @staticmethod
+    def _get_default_model_values() -> dict:
+
+        values = {}
+        values['periods'] = []
+        values['organisations'] = []
+        values['scenarios'] = []
+
+        values['x_columns'] = []
+        values['y_columns'] = []
+
+        values['x_analytics'] = []
+        values['y_analytics'] = []
+
+        values['x_analytic_keys'] = []
+        values['y_analytic_keys'] = []
+
+        values['is_fit'] = False
+        values['fitting_is_started'] = False
+        values['fitting_is_error'] = False
+
+        values['feature_importances_is_calculated'] = False
+        values['fi_calculation_is_started'] = False
+
+        values['fi_calculation_is_error'] = False
+        values['fi_calculation_job_id'] = ''
+        values['fi_calculation_job_pid'] = 0
+
+        values['fitting_start_date'] = None
+        values['fitting_date'] = None
+
+        values['fitting_job_id'] = ''
+        values['fitting_job_pid'] = 0
+
+        return values
 
 
 class NeuralNetworkModel(BaseModel):
@@ -2667,6 +2777,7 @@ def drop_fitting(parameters):
 
     return result
 
+
 def predict(parameters):
 
     processor = ModelProcessor(parameters)
@@ -2693,6 +2804,15 @@ def calculate_feature_importances(parameters):
 
     return result
 
+
+def drop_fi_calculation(parameters):
+
+    processor = ModelProcessor(parameters)
+    processor.drop_fi_calculation(parameters)
+
+    result = dict(status='OK', error_text='', description='feature importances calculation is dropped')
+
+    return result
 
 def get_feature_importances(parameters):
 

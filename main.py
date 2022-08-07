@@ -62,6 +62,7 @@ if __name__ == '__main__':
     request_dict[19] = 'data_get_raw_data_quantity'
     request_dict[20] = 'data_remove_all_raw_data'
     request_dict[21] = 'model_drop_fitting'
+    request_dict[22] = 'model_drop_fi_calculation'
 
     print('Input number to choose action:')
     for key, value in request_dict.items():
