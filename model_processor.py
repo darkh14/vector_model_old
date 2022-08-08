@@ -517,7 +517,12 @@ class BaseModel:
                              'fitting_date': None,
                              'fitting_start_date': datetime.datetime.now(),
                              'fitting_job_id': '',
-                             'fitting_job_pid': 0}
+                             'fitting_job_pid': 0,
+                             'feature_importances_is_calculated': False,
+                             'fi_calculation_is_started': False,
+                             'fi_calculation_is_error': False,
+                             'fi_calculation_job_id': '',
+                             'fi_calculation_job_pid': 0}
 
         self._set_model_fields_and_write_to_db(model_description)
 
