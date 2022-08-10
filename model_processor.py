@@ -991,11 +991,9 @@ class BaseModel:
                 line_width=1,
                 layer="below"))
 
-        measure = ["absolute", *(values.shape[0]-2)*["relative"], "total"]
-
         fig = go.Figure(go.Waterfall(
             name="Factor analysis", orientation="v",
-            measure=["absolute", *3 * ["relative"], "total"],
+            measure=["absolute", *(values.shape[0]-2) * ["relative"], "total"],
             x=x_list,
             y=y_list,
             text=text_list,
@@ -1454,8 +1452,8 @@ class NeuralNetworkModel(BaseModel):
         value = 0
         if current_indicator_short_id == indicator_short_id:
             value = value_calculated - value_based
-        elif current_indicator_short_id in used_indicator_ids:
-            value = value_calculated
+        # elif indicator_short_id in used_indicator_ids:
+        #     value = value_calculated
         else:
             value = value_based
 
@@ -2818,6 +2816,7 @@ def drop_fi_calculation(parameters):
     result = dict(status='OK', error_text='', description='feature importances calculation is dropped')
 
     return result
+
 
 def get_feature_importances(parameters):
 
