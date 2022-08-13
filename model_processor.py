@@ -1360,6 +1360,11 @@ class NeuralNetworkModel(BaseModel):
 
         main_periods = list(main_periods)
 
+        additional_data['main_periods'] = main_periods
+        additional_data['output_columns'] = output_columns
+
+        output_base = self._get_output_value_for_fa(input_data, outputs, used_indicator_ids, additional_data)
+
         for indicator_element in input_indicators:
 
             ind_short_id = self._data_processor.get_indicator_short_id(indicator_element['type'],
@@ -1368,50 +1373,15 @@ class NeuralNetworkModel(BaseModel):
             if not ind_short_id:
                 raise ProcessorException('Indicator {}, type {}, id {} is not in model indicators')
 
-            c_input_data = input_data.copy()
+            output_value = self._get_output_value_for_fa(input_data, outputs, used_indicator_ids, additional_data,
+                                                         ind_short_id)
 
-            c_input_data['scenario'] = outputs['calculated']['name']
-            c_input_data['periodicity'] = outputs['calculated']['periodicity']
-
-            c_input_data = self._data_processor.add_short_ids_to_raw_data(c_input_data)
-
-            c_input_data['current_indicator_short_id'] = ind_short_id
-            c_input_data['used_indicator_ids'] = None
-            c_input_data['used_indicator_ids'] = c_input_data['used_indicator_ids'].apply(lambda x: used_indicator_ids)
-
-            c_input_data['value'] = c_input_data[['value_base',
-                                              'value_calculated',
-                                              'used_indicator_ids',
-                                              'indicator_short_id',
-                                              'current_indicator_short_id']].apply(self._get_value_for_fa, axis=1)
-
-            c_input_data = c_input_data.drop(['value_base', 'value_calculated', 'used_indicator_ids',
-                                              'current_indicator_short_id'], axis=1)
-
-            # encode_fields = {'organisation': 'organisations', 'year': 'years', 'month': 'months'}
-            encode_fields = None
-
-            x, x_pd = self._data_processor.get_x_for_prediction(c_input_data, additional_data, encode_fields)
-
-            inner_model = self._get_inner_model()
-
-            y = inner_model.predict(x)
-
-            data = x_pd.copy()
-            data[self.y_columns] = y
-
-            output_data = data.loc[data['period'].isin(main_periods)].copy()
-
-            output_data = output_data[output_columns]
-            output_data['value'] = output_data.apply(sum, axis=1)
-
-            output_value = output_data['value'].sum()
-
-            result_element = {'indicator': indicator_element, 'value': output_value}
+            result_element = {'indicator': indicator_element, 'value': output_value - output_base}
 
             result_data.append(result_element)
-
             used_indicator_ids.append(ind_short_id)
+
+            output_base = output_value
 
         graph_string = ''
         if get_graph:
@@ -1444,6 +1414,53 @@ class NeuralNetworkModel(BaseModel):
 
         return not errors, errors
 
+    def _get_output_value_for_fa(self, input_data, outputs, used_indicator_ids, additional_data,
+                                 current_ind_short_id=''):
+
+        c_input_data = input_data.copy()
+
+        c_input_data['scenario'] = outputs['calculated']['name']
+        c_input_data['periodicity'] = outputs['calculated']['periodicity']
+
+        c_input_data = self._data_processor.add_short_ids_to_raw_data(c_input_data)
+
+        c_input_data['current_indicator_short_id'] = current_ind_short_id
+        c_input_data['used_indicator_ids'] = None
+        c_input_data['used_indicator_ids'] = c_input_data['used_indicator_ids'].apply(lambda x: used_indicator_ids)
+
+        c_input_data['value'] = c_input_data[['value_base',
+                                              'value_calculated',
+                                              'used_indicator_ids',
+                                              'indicator_short_id',
+                                              'current_indicator_short_id']].apply(self._get_value_for_fa, axis=1)
+
+        c_input_data = c_input_data.drop(['value_base', 'value_calculated', 'used_indicator_ids',
+                                          'current_indicator_short_id'], axis=1)
+
+        # encode_fields = {'organisation': 'organisations', 'year': 'years', 'month': 'months'}
+        encode_fields = None
+
+        x, x_pd = self._data_processor.get_x_for_prediction(c_input_data, additional_data, encode_fields)
+
+        inner_model = self._get_inner_model()
+
+        y = inner_model.predict(x)
+
+        data = x_pd.copy()
+        data[self.y_columns] = y
+
+        main_periods = additional_data['main_periods']
+        output_columns = additional_data['output_columns']
+
+        output_data = data.loc[data['period'].isin(main_periods)].copy()
+
+        output_data = output_data[output_columns]
+        output_data['value'] = output_data.apply(sum, axis=1)
+
+        output_value = output_data['value'].sum()
+
+        return output_value
+
     @staticmethod
     def _get_value_for_fa(input_parameters):
 
@@ -1451,9 +1468,9 @@ class NeuralNetworkModel(BaseModel):
          indicator_short_id, current_indicator_short_id) = input_parameters
         value = 0
         if current_indicator_short_id == indicator_short_id:
-            value = value_calculated - value_based
-        # elif indicator_short_id in used_indicator_ids:
-        #     value = value_calculated
+            value = value_calculated # value_calculated - value_based
+        elif indicator_short_id in used_indicator_ids:
+            value = value_calculated
         else:
             value = value_based
 
