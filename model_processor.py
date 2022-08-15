@@ -470,11 +470,9 @@ class BaseModel:
 
             model_description = {'is_fit': False,
                                  'fitting_is_started': False,
-                                 'fitting_is_error': False,
+                                 'fitting_is_error': True,
                                  'fitting_date': None,
-                                 'fitting_start_date': datetime.datetime.now(),
-                                 'fitting_job_id': '',
-                                 'fitting_job_pid': 0,
+                                 'fitting_start_date': None,
                                  'feature_importances_is_calculated': False,
                                  'fi_calculation_is_started': False,
                                  'fi_calculation_is_error': False,
