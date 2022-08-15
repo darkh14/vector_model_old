@@ -1097,6 +1097,12 @@ class NeuralNetworkModel(BaseModel):
 
         x, y = self._prepare_for_fit(retrofit, date_from)
 
+        if not x:
+            raise ProcessorException('There is no data for fitting')
+
+        if not y:
+            raise ProcessorException('There is no labels for fitting')
+
         inner_model = self._get_inner_model(x.shape[1], y.shape[1])
 
         self._inner_model = inner_model
