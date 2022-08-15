@@ -1097,10 +1097,10 @@ class NeuralNetworkModel(BaseModel):
 
         x, y = self._prepare_for_fit(retrofit, date_from)
 
-        if not x:
+        if not x.any():
             raise ProcessorException('There is no data for fitting')
 
-        if not y:
+        if not y.any():
             raise ProcessorException('There is no labels for fitting')
 
         inner_model = self._get_inner_model(x.shape[1], y.shape[1])
@@ -2241,7 +2241,10 @@ class DataProcessor:
 
             for an_el in c_analytics:
 
-                data_str_a = data_str.loc[(data_str['analytics'] == an_el)]
+                if with_analytics:
+                    data_str_a = data_str.loc[(data_str['analytics'] == an_el)]
+                else:
+                    data_str_a = data_str
 
                 data_str_a = data_str_a.groupby(['organisation', 'scenario', 'period', 'month', 'year'], as_index=False).sum()
 
