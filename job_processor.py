@@ -220,7 +220,7 @@ def execute_method(system_parameters):
         return {'status': 'error', 'error_text': error_text}
 
     if not job_line or job_line['status'] != 'created':
-        return {'status': 'error', 'error_text': 'job line not found'}
+        return {'status': 'error', 'error_text': 'job line is  not found'}
     try:
 
         job_line['status'] = 'started'
@@ -292,6 +292,7 @@ if __name__ == '__main__':
             result = None
             error_text = ''
             try:
+                time.sleep(1)
                 result = execute_method(sys.argv)
                 if result.get('error_text'):
                     error_text = result['error_text']
