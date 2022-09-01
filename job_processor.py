@@ -56,6 +56,8 @@ class JobProcessor:
 
         db_connector = JobProcessor.get_db_connector(parameters)
 
+        db_connector.write_job(new_line)
+
         with open(out_file_name, "w") as f_out:
             with open(err_file_name, "w") as f_err:
                 job_process = subprocess.Popen([python_command,
@@ -66,7 +68,6 @@ class JobProcessor:
                                        db_connector.db_id], stdout=f_out, stderr=f_err)
 
         new_line['pid'] = job_process.pid
-
         db_connector.write_job(new_line)
 
         return {'status': 'OK', 'error_text': '', 'pid': job_process.pid,
@@ -292,7 +293,6 @@ if __name__ == '__main__':
             result = None
             error_text = ''
             try:
-                time.sleep(1)
                 result = execute_method(sys.argv)
                 if result.get('error_text'):
                     error_text = result['error_text']
