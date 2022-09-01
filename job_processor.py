@@ -301,11 +301,13 @@ if __name__ == '__main__':
                 error_text = traceback.format_exc()
 
             if error_text:
+                print(error_text)
                 job_id = str(uuid.UUID(sys.argv[2]))
                 db_connector = JobProcessor.get_db_connector({'db_id': sys.argv[4]})
                 job_line = db_connector.read_job(job_id)
-                job_line['status'] = 'error'
-                job_line['error'] = error_text
+                if job_line:
+                    job_line['status'] = 'error'
+                    job_line['error'] = error_text
 
 
 
