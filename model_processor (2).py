@@ -1326,7 +1326,7 @@ class NeuralNetworkModel(BaseModel):
         if not inner_model:
             inner_model = self._create_inner_model(inputs_number, outputs_number)
 
-            self._compile_model(model)
+            self._compile_model(inner_model)
 
         self._inner_model = inner_model
 
@@ -1546,21 +1546,21 @@ class PeriodicNeuralNetworkModel(NeuralNetworkModel):
         x_y_data = tf.data.Dataset.from_tensor_slices((x, y))
         x_y_data = x_y_data.cache().shuffle(BUFFER_SIZE).batch(BATCH_SIZE).repeat()
 
-        inner_model = self._get_inner_model(x.shape[-2:], y.shape[-2])
+        self._inner_model = self._get_inner_model(x.shape[-2:], y.shape[-2])
 
         self._epochs = epochs or 10
         self._validation_split = validation_split or 0.2
 
-        inner_model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), loss='mae',
-                            metrics=['RootMeanSquaredError'])
-
-        history = inner_model.fit(x_y_data, epochs=self._epochs, steps_per_epoch=50, verbose=2)
-
-        self._inner_model = inner_model
+        history = self._inner_model.fit(x_y_data, epochs=self._epochs, steps_per_epoch=50, verbose=2)
 
         self._write_after_fit(x, y.reshape(y.shape[0], y.shape[1]))
 
         return history.history
+
+    @staticmethod
+    def _compile_model(model):
+        model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), loss='mae',
+                      metrics=['RootMeanSquaredError'])
 
     def predict(self, inputs, get_graph=False, graph_data=None, additional_parameters=None):
 
