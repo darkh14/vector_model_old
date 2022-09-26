@@ -1326,7 +1326,7 @@ class NeuralNetworkModel(BaseModel):
         if not inner_model:
             inner_model = self._create_inner_model(inputs_number, outputs_number)
 
-            self._compile_model(model)
+            self._compile_model(inner_model)
 
         self._inner_model = inner_model
 
