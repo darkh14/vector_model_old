@@ -1783,6 +1783,11 @@ class LinearModel(NeuralNetworkModel):
 
         return model
 
+    @staticmethod
+    def _compile_model(model):
+        model.compile(optimizer=optimizers.Adam(learning_rate=0.01), loss='MeanSquaredError',
+                      metrics=['RootMeanSquaredError'])
+
 
 class IdProcessor(LoadingProcessor):
 
