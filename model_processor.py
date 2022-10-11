@@ -2330,7 +2330,7 @@ class DataProcessor:
             for col in x_digit_without_month:
 
                 try:
-                    dataset[col].any()
+                    print('res - {}'.format(dataset[col].any()))
                 except Exception as ex:
                     print(dataset[col].unique())
 
