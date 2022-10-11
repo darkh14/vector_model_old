@@ -2327,15 +2327,7 @@ class DataProcessor:
 
             col_to_delete = []
 
-            print(x_digit_without_month)
-
             for col in x_digit_without_month:
-
-                try:
-                    print('res - {}'.format(dataset[col].unique()))
-                except Exception as ex:
-                    print(dataset[col].unique())
-
                 if not dataset[col].any():
                     col_to_delete.append(col)
 
