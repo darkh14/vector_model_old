@@ -2327,6 +2327,8 @@ class DataProcessor:
 
             col_to_delete = []
 
+            print(x_digit_without_month)
+
             for col in x_digit_without_month:
 
                 try:
