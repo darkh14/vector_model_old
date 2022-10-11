@@ -2328,8 +2328,8 @@ class DataProcessor:
             col_to_delete = []
 
             for col in x_digit_without_month:
+                print(dataset[col])
                 if not dataset[col].any():
-                    print(dataset[col])
                     col_to_delete.append(col)
 
             columns_not_to_del = [_el for _el in all_columns if _el not in col_to_delete]
