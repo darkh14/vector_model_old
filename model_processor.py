@@ -608,9 +608,9 @@ class BaseModel:
 
             model_description = {'feature_importances_is_calculated': False,
                                  'fi_calculation_is_started': False,
-                                 'fi_calculation_is_error': False,
-                                 'fi_calculation_job_id': '',
-                                 'fi_calculation_job_pid': 0}
+                                 'fi_calculation_is_error': True,
+                                 'fitting_job_id': '',
+                                 'fitting_job_pid': 0}
 
             self._set_model_fields_and_write_to_db(model_description)
 
@@ -1173,7 +1173,7 @@ class NeuralNetworkModel(BaseModel):
 
         indicator_filter = [ind_data['short_id'] for ind_data in self.x_indicators + self.y_indicators]
 
-        data = self._data_processor.read_raw_data(indicator_filter, date_from)
+        data = self._data_processor.read_raw_data(indicator_filter, date_from=date_from, ad_filter=self.filter)
         additional_data = {'x_indicators': self.x_indicators,
                            'y_indicators': self.y_indicators,
                            'periods': self.periods,
