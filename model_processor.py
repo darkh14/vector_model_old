@@ -2477,6 +2477,9 @@ class DataProcessor:
         x_analytic_keys = []
         y_analytic_keys = []
 
+        x_an_keys_ids = []
+        y_an_keys_ids = []
+
         for column in columns:
             if len(column) > 4:
                 if column[4:11] in x_ind_ids:
@@ -2484,14 +2487,18 @@ class DataProcessor:
                     if len(c_col_list) >= 3 and c_col_list[2] == 'an':
                         short_id = c_col_list[3]
                         analytics = self._get_analytics_description_from_key_id(short_id)
-                        x_analytic_keys.append({'short_id': short_id, 'analytics': analytics})
+                        if short_id not in x_an_keys_ids:
+                            x_analytic_keys.append({'short_id': short_id, 'analytics': analytics})
+                            x_an_keys_ids.append(short_id)
 
                 if column[4:11] in y_ind_ids:
                     c_col_list = column.split('_')
                     if len(c_col_list) >= 3 and c_col_list[2] == 'an':
                         short_id = c_col_list[3]
                         analytics = self._get_analytics_description_from_key_id(short_id)
-                        y_analytic_keys.append({'short_id': short_id, 'analytics': analytics})
+                        if short_id not in y_an_keys_ids:
+                            y_analytic_keys.append({'short_id': short_id, 'analytics': analytics})
+                            y_an_keys_ids.append(short_id)
 
         x_an_ids = []
         for key_val in x_analytic_keys:
