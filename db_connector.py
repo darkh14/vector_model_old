@@ -399,6 +399,26 @@ class Connector:
 
         return result
 
+    def write_temp(self, data, temp_name=''):
+        collection_name = 'temp_' + temp_name
+        collection = self.get_collection(collection_name)
+
+        collection.insert_many(data)
+
+    def read_temp(self, temp_name=''):
+        collection_name = 'temp_' + temp_name
+        collection = self.get_collection(collection_name)
+
+        cursor = collection.find({}, {'_id': False})
+        data = list(cursor)
+
+        return data
+
+    def drop_temp(self, temp_name=''):
+        collection_name = 'temp_' + temp_name
+        collection = self.get_collection(collection_name)
+        collection.drop()
+
     @staticmethod
     def _numpy_to_list_of_dicts(np_array):
         if not len(np_array.shape) == 2:

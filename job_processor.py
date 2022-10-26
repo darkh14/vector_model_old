@@ -9,6 +9,7 @@ from importlib import import_module
 from logger import ProcessorException
 import time
 from datetime import datetime
+import copy
 
 
 class JobProcessor:
@@ -52,9 +53,14 @@ class JobProcessor:
                     'error': '',
                     'pid': 0}
 
-        python_command, python_path = cls._get_path_command()
-
         db_connector = JobProcessor.get_db_connector(parameters)
+
+        if parameters.get('request_type') == 'data_load_package':
+
+            db_connector.write_temp(new_line['parameters']['package']['data'], new_job_id)
+            new_line['parameters']['package']['data'] = None
+
+        python_command, python_path = cls._get_path_command()
 
         db_connector.write_job(new_line)
 
@@ -220,6 +226,7 @@ def execute_method(system_parameters):
 
         return {'status': 'error', 'error_text': error_text}
 
+    temp_name = ''
     if not job_line or job_line['status'] != 'created':
         return {'status': 'error', 'error_text': 'job line is  not found'}
     try:
@@ -233,10 +240,18 @@ def execute_method(system_parameters):
         print(imported_module)
         imported_function = imported_module.__dict__[function_name]
         print(imported_function)
-        function_parameters = job_line['parameters'].copy()
+        function_parameters = copy.deepcopy(job_line['parameters'].copy())
+
         function_parameters['background_job'] = False
 
         function_parameters['job_id'] = job_id
+
+        if function_parameters.get('request_type') == 'data_load_package':
+            temp_name = job_id
+            data = db_connector.read_temp(job_id)
+
+            function_parameters['package']['data'] = data
+            db_connector.drop_temp(job_id)
 
         result = imported_function(function_parameters)
 
@@ -263,6 +278,9 @@ def execute_method(system_parameters):
         db_connector.write_job(job_line)
 
         result = {'status': 'error', 'error_text': error_text}
+
+        if temp_name:
+            db_connector.drop_temp(temp_name)
 
     return result
 

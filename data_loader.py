@@ -66,6 +66,11 @@ class LoadingProcessor:
         if self._new_loading:
             raise ProcessorException('Loading is not initialized!')
 
+        package_parameters = self._get_package_parameters_from_db(package['id'])
+
+        if package_parameters['status'] == 'loaded':
+            raise ProcessorException('Current package is loaded yet!')
+
         self._initialize_current_package(package)
 
         overwrite = self._loading_parameters['type'] == 'full'
@@ -73,7 +78,7 @@ class LoadingProcessor:
 
         self._set_package_status('in_process')
 
-        raw_data = self._current_package['data']
+        raw_data = self._current_package.get('data')
 
         if not raw_data:
             raise ProcessorException('Package data is not found')
@@ -183,6 +188,9 @@ class LoadingProcessor:
 
     def _get_loading_parameters_from_db(self):
         return self._db_connector.read_loading(self.loading_id)
+
+    def _get_package_parameters_from_db(self, package_id):
+        return self._db_connector.read_package(self.loading_id, package_id)
 
     def _get_packages_from_db(self):
         return self._db_connector.read_loading_packages(self.loading_id)
