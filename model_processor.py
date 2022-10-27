@@ -1207,7 +1207,9 @@ class NeuralNetworkModel(BaseModel):
 
         indicator_filter = [ind_data['short_id'] for ind_data in self.x_indicators + self.y_indicators]
 
-        data = self._data_processor.read_raw_data(indicator_filter, date_from=date_from, ad_filter=self.filter)
+        db_filter = {key: value for key, value in self.filter.items() if key not in ['date_from', 'date_to']}
+
+        data = self._data_processor.read_raw_data(indicator_filter, date_from=date_from, ad_filter=db_filter)
 
         if not data:
             raise ProcessorException('There are no data for fitting. Check indicators, analytics and other '
@@ -1222,7 +1224,8 @@ class NeuralNetworkModel(BaseModel):
                            'organisations': self.organisations,
                            'scenarios': self.scenarios,
                            'x_columns': self.x_columns,
-                           'y_columns': self.y_columns}
+                           'y_columns': self.y_columns,
+                           'filter': self.filter}
         if add_params:
             additional_data.update(add_params)
 
@@ -1924,8 +1927,19 @@ class DataProcessor:
 
         data = self._prepare_dataset_add_indicators_analytics(data_grouped, data_grouped_values, indicators)
 
+        # TODO: Optimize period filter
+        data['period_date'] = data['period'].apply(lambda x: datetime.datetime.strptime(x, '%d.%m.%Y'))
+        if additional_data['filter'].get('date_from'):
+            filter_date_from = datetime.datetime.strptime(additional_data['filter']['date_from'], '%d.%m.%Y')
+            data = data[data['period_date'] >= filter_date_from]
+        if additional_data['filter'].get('date_to'):
+            filter_date_to = datetime.datetime.strptime(additional_data['filter']['date_to'], '%d.%m.%Y')
+            data = data[data['period_date'] <= filter_date_to]
+
         additional_data['years'] = list(set([self._get_year(period) for period in additional_data['periods']]))
         additional_data['months'] = list(set([self._get_month(period) for period in additional_data['periods']]))
+
+        data.drop('period_date', axis=1, inplace=True)
 
         if encode_fields:
             data = self._prepare_dataset_one_hot_encode(data, additional_data, encode_fields)
