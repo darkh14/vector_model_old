@@ -19,14 +19,14 @@ from data_loader import LoadingProcessor
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
-# from tensorflow.python.keras.wrappers.scikit_learn import KerasRegressor
-from keras.wrappers.scikit_learn import KerasRegressor
+from tensorflow.python.keras.wrappers.scikit_learn import KerasRegressor
+# from keras.wrappers.scikit_learn import KerasRegressor
 import eli5
 
 from eli5.sklearn import PermutationImportance
-from keras.models import Sequential, clone_model
-from keras.layers import Dense
-from keras import optimizers
+from tensorflow.keras.models import Sequential, clone_model
+from tensorflow.keras.layers import Dense
+from tensorflow.keras import optimizers
 import tensorflow as tf
 
 from tensorflow import keras
