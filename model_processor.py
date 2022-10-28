@@ -19,13 +19,14 @@ from data_loader import LoadingProcessor
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
-from tensorflow.python.keras.wrappers.scikit_learn import KerasRegressor
+# from tensorflow.python.keras.wrappers.scikit_learn import KerasRegressor
+from keras.wrappers.scikit_learn import KerasRegressor
 import eli5
 
 from eli5.sklearn import PermutationImportance
-from tensorflow.keras.models import Sequential, clone_model
-from tensorflow.keras.layers import Dense
-from tensorflow.keras import optimizers
+from keras.models import Sequential, clone_model
+from keras.layers import Dense
+from keras import optimizers
 import tensorflow as tf
 
 from tensorflow import keras
@@ -1173,14 +1174,17 @@ class NeuralNetworkModel(BaseModel):
 
         indicator_filter = [ind_data['short_id'] for ind_data in self.x_indicators + self.y_indicators]
 
-        data = self._data_processor.read_raw_data(indicator_filter, date_from=date_from, ad_filter=self.filter)
+        db_filter = {key: value for key, value in self.filter.items() if key not in ['date_from', 'date_to']}
+
+        data = self._data_processor.read_raw_data(indicator_filter, date_from=date_from, ad_filter=db_filter)
         additional_data = {'x_indicators': self.x_indicators,
                            'y_indicators': self.y_indicators,
                            'periods': self.periods,
                            'organisations': self.organisations,
                            'scenarios': self.scenarios,
                            'x_columns': self.x_columns,
-                           'y_columns': self.y_columns}
+                           'y_columns': self.y_columns,
+                           'filter': self.filter}
         x, y, x_columns, y_columns = self._data_processor.get_x_y_for_fitting(data, additional_data)
 
         self._temp_input = x
