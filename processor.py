@@ -98,8 +98,7 @@ class Processor:
 
         _start_response = start_response or self._start_response
 
-        res = _start_response('200 OK', [('Content-type', 'text/html'), ('Content-Length', str(output_len))])
-        print('start response result - {}'.format(res))
+        _start_response('200 OK', [('Content-type', 'text/html'), ('Content-Length', str(output_len))])
 
         return [output_str]
 
